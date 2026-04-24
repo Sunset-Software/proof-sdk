@@ -157,6 +157,7 @@ import {
   type AgentFamily,
 } from '../ui/agent-identity-icon';
 import { getViewerName, promptForName } from '../ui/name-prompt';
+import { initCommentsSidebar } from '../ui/comments-sidebar';
 import {
   initAgentIntegration,
   handleMarksChange as agentHandleMarksChange,
@@ -1107,6 +1108,7 @@ class ProofEditorImpl implements ProofEditor {
   private findMatches: Array<{ from: number; to: number }> = [];
   private currentFindIndex: number = -1;
   private cleanupNavigation: (() => void) | null = null;
+  private commentsSidebarHandle: { destroy: () => void } | null = null;
   private lastEditorInputActivitySentAt: number = 0;
   private lastLocalTypingAt: number = 0;
   private lifecycleHandlersInstalled: boolean = false;
@@ -1254,6 +1256,8 @@ class ProofEditorImpl implements ProofEditor {
     this.updateEditableState(view);
     this.cleanupNavigation = initAgentNavigation(view);
 
+    this.mountCommentsSidebar(view);
+
     this.installLifecycleHandlers();
 
     // Add cursor tracking
@@ -1280,6 +1284,18 @@ class ProofEditorImpl implements ProofEditor {
     // If in share mode, load from share server
     if (this.isShareMode) {
       await this.initFromShare();
+    }
+  }
+
+  private mountCommentsSidebar(view: EditorView): void {
+    // Only in share mode. The local editor has no backend for comments and
+    // the rail would be an empty shell.
+    if (!this.isShareMode) return;
+    if (this.commentsSidebarHandle) return;
+    try {
+      this.commentsSidebarHandle = initCommentsSidebar({ view });
+    } catch (error) {
+      console.warn('[comments-sidebar] failed to mount', error);
     }
   }
 

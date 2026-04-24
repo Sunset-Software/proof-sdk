@@ -913,6 +913,204 @@
       color: #999;
     }
 
+    /* Comments sidebar (right rail) */
+    .comments-sidebar {
+      position: fixed;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: 320px;
+      z-index: 180;
+      display: flex;
+      pointer-events: auto;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+    .comments-sidebar-toggle {
+      position: absolute;
+      top: 18px;
+      left: -36px;
+      width: 32px;
+      height: 32px;
+      border-radius: 8px 0 0 8px;
+      border: 1px solid rgba(17, 17, 17, 0.12);
+      background: #ffffff;
+      color: #333;
+      font-size: 14px;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .comments-sidebar-toggle:hover {
+      background: #f7f7f7;
+    }
+    .comments-sidebar-panel {
+      flex: 1;
+      background: #ffffff;
+      border-left: 1px solid rgba(17, 17, 17, 0.08);
+      box-shadow: -10px 0 28px rgba(0, 0, 0, 0.04);
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+    .comments-sidebar-collapsed .comments-sidebar-panel {
+      display: none;
+    }
+    .comments-sidebar-collapsed .comments-sidebar-toggle {
+      left: auto;
+      right: 12px;
+    }
+    .comments-sidebar-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 18px 10px;
+      border-bottom: 1px solid rgba(17, 17, 17, 0.06);
+    }
+    .comments-sidebar-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #111;
+      letter-spacing: -0.1px;
+    }
+    .comments-sidebar-close {
+      background: none;
+      border: none;
+      font-size: 18px;
+      line-height: 1;
+      color: #888;
+      cursor: pointer;
+      padding: 4px 8px;
+      border-radius: 6px;
+    }
+    .comments-sidebar-close:hover {
+      color: #111;
+      background: rgba(17, 17, 17, 0.05);
+    }
+    .comments-sidebar-filters {
+      padding: 8px 18px 10px;
+      border-bottom: 1px solid rgba(17, 17, 17, 0.04);
+      display: flex;
+      gap: 14px;
+      align-items: center;
+    }
+    .comments-sidebar-resolved-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: #666;
+      cursor: pointer;
+      user-select: none;
+    }
+    .comments-sidebar-resolved-toggle input[type="checkbox"] {
+      cursor: pointer;
+    }
+    .comments-sidebar-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 6px 0 16px;
+    }
+    .comments-sidebar-empty {
+      padding: 32px 20px;
+      color: #888;
+      font-size: 13px;
+      line-height: 1.45;
+      text-align: center;
+    }
+    .comments-sidebar-section-heading {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #888;
+      padding: 18px 18px 6px;
+    }
+    .comments-sidebar-row {
+      display: block;
+      width: 100%;
+      text-align: left;
+      background: transparent;
+      border: none;
+      border-bottom: 1px solid rgba(17, 17, 17, 0.04);
+      padding: 12px 18px;
+      cursor: pointer;
+      font-family: inherit;
+      color: inherit;
+      transition: background 0.12s;
+    }
+    .comments-sidebar-row:hover {
+      background: rgba(17, 17, 17, 0.03);
+    }
+    .comments-sidebar-row:focus-visible {
+      outline: 2px solid #0ea5e9;
+      outline-offset: -2px;
+    }
+    .comments-sidebar-row-resolved {
+      opacity: 0.55;
+    }
+    .comments-sidebar-row-detached {
+      opacity: 0.7;
+    }
+    .comments-sidebar-quote {
+      font-size: 13px;
+      color: #333;
+      line-height: 1.45;
+      margin-bottom: 6px;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .comments-sidebar-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      color: #888;
+    }
+    .comments-sidebar-author {
+      font-weight: 500;
+      color: #555;
+    }
+    .comments-sidebar-author-agent {
+      color: #4338ca;
+    }
+    .comments-sidebar-time {
+      color: #9ca3af;
+    }
+    .comments-sidebar-chip {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 7px;
+      border-radius: 10px;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+    .comments-sidebar-chip-replies {
+      background: rgba(14, 165, 233, 0.12);
+      color: #0369a1;
+    }
+    .comments-sidebar-chip-resolved {
+      background: rgba(34, 197, 94, 0.12);
+      color: #166534;
+    }
+    .comments-sidebar-pulse {
+      animation: comments-sidebar-pulse-anim 1.1s ease-out;
+    }
+    @keyframes comments-sidebar-pulse-anim {
+      0%   { box-shadow: 0 0 0 0 rgba(14, 165, 233, 0.45); }
+      60%  { box-shadow: 0 0 0 8px rgba(14, 165, 233, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(14, 165, 233, 0); }
+    }
+    /* Narrow viewport fallback — hide the rail entirely. The mobile sheet
+       variant is added by U7. */
+    @media (max-width: 900px) {
+      .comments-sidebar { display: none; }
+    }
+
     /* Prism.js Syntax Highlighting */
     .milkdown pre code .token.comment,
     .milkdown pre code .token.prolog,
