@@ -46,6 +46,7 @@ async function main(): Promise<void> {
   const allowedCorsOrigins = parseAllowedCorsOrigins();
 
   app.use(express.json({ limit: '10mb' }));
+  app.use(express.static(path.join(__dirname, '..', 'dist')));
   app.use(express.static(path.join(__dirname, '..', 'public')));
 
   app.use((req, res, next) => {
@@ -63,6 +64,8 @@ async function main(): Promise<void> {
         'X-Proof-Client-Version',
         'X-Proof-Client-Build',
         'X-Proof-Client-Protocol',
+        'X-Proof-Viewer-Id',
+        'X-Proof-Viewer-Name',
         'x-share-token',
         'x-bridge-token',
         'x-auth-poll-token',

@@ -1078,6 +1078,18 @@ function initDatabase(): void {
   d.exec('CREATE INDEX IF NOT EXISTS idx_document_access_secret ON document_access(secret_hash)');
 
   d.exec(`
+    CREATE TABLE IF NOT EXISTS document_viewers (
+      document_slug TEXT NOT NULL,
+      viewer_id TEXT NOT NULL,
+      display_name TEXT,
+      last_seen_at TEXT NOT NULL,
+      PRIMARY KEY (document_slug, viewer_id),
+      FOREIGN KEY (document_slug) REFERENCES documents(slug)
+    )
+  `);
+  d.exec('CREATE INDEX IF NOT EXISTS idx_document_viewers_slug_last_seen ON document_viewers(document_slug, last_seen_at DESC)');
+
+  d.exec(`
     CREATE TABLE IF NOT EXISTS document_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       document_slug TEXT NOT NULL,
@@ -3854,4 +3866,68 @@ export function updateDocumentOwnerId(slug: string, ownerId: string): boolean {
     WHERE slug = ? AND (owner_id IS NULL OR owner_id = '')
   `).run(ownerId, now, slug);
   return result.changes > 0;
+}
+
+export type DocumentViewerRow = {
+  document_slug: string;
+  viewer_id: string;
+  display_name: string | null;
+  last_seen_at: string;
+};
+
+/**
+ * Upsert a viewer's presence on a document. Called whenever we observe a
+ * valid X-Proof-Viewer-Id header on a request for this slug. display_name
+ * is mutable (people rename); viewer_id is the stable identity.
+ */
+export function upsertDocumentViewer(
+  slug: string,
+  viewerId: string,
+  displayName: string | null,
+): void {
+  assertWritesAllowed('upsertDocumentViewer');
+  if (!slug || !viewerId) return;
+  const now = new Date().toISOString();
+  const trimmedName = typeof displayName === 'string' && displayName.trim()
+    ? displayName.trim().slice(0, 64)
+    : null;
+  getDb().prepare(`
+    INSERT INTO document_viewers (document_slug, viewer_id, display_name, last_seen_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(document_slug, viewer_id) DO UPDATE SET
+      display_name = COALESCE(excluded.display_name, document_viewers.display_name),
+      last_seen_at = excluded.last_seen_at
+  `).run(slug, viewerId, trimmedName, now);
+}
+
+/**
+ * List recent viewers of a document for mention typeahead, sorted by
+ * most recent last_seen_at.
+ */
+export function listRecentDocumentViewers(slug: string, limit: number): DocumentViewerRow[] {
+  if (!slug) return [];
+  const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.min(Math.trunc(limit), 100) : 20;
+  return getDb().prepare(`
+    SELECT document_slug, viewer_id, display_name, last_seen_at
+    FROM document_viewers
+    WHERE document_slug = ?
+    ORDER BY last_seen_at DESC
+    LIMIT ?
+  `).all(slug, safeLimit) as DocumentViewerRow[];
+}
+
+/**
+ * Fetch a single viewer row by (slug, viewerId). Returns undefined if not present.
+ */
+export function getDocumentViewer(
+  slug: string,
+  viewerId: string,
+): DocumentViewerRow | undefined {
+  if (!slug || !viewerId) return undefined;
+  return getDb().prepare(`
+    SELECT document_slug, viewer_id, display_name, last_seen_at
+    FROM document_viewers
+    WHERE document_slug = ? AND viewer_id = ?
+    LIMIT 1
+  `).get(slug, viewerId) as DocumentViewerRow | undefined;
 }

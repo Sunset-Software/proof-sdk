@@ -586,7 +586,10 @@ function resolveRequestScopedCollabWsBase(req: Request): string {
     return configuredPublicBase.replace(/\/+$/, '');
   }
 
-  const embeddedRaw = (process.env.COLLAB_EMBEDDED_WS || '').trim().toLowerCase();
+  // Default to embedded: this OSS server multiplexes the collab WS on the main
+  // HTTP port (see server/index.ts). The legacy appPort+1 topology only applies
+  // when an external collab service is deployed — opt out explicitly if needed.
+  const embeddedRaw = (process.env.COLLAB_EMBEDDED_WS || '1').trim().toLowerCase();
   const embedded = embeddedRaw === '1' || embeddedRaw === 'true' || embeddedRaw === 'yes' || embeddedRaw === 'on';
 
   const publicBase = getPublicBaseUrl(req);

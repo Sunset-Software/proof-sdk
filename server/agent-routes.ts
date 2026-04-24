@@ -7,8 +7,10 @@ import {
   getDocumentBySlug,
   getDocumentProjectionBySlug,
   listDocumentEvents,
+  listRecentDocumentViewers,
   rebuildDocumentBlocks,
   resolveDocumentAccessRole,
+  upsertDocumentViewer,
 } from './db.js';
 import {
   activateDurableCollabQuarantine,
@@ -823,6 +825,36 @@ async function prepareRewriteCollabBarrier(
   }
 }
 
+const VIEWER_ID_MAX_LENGTH = 64;
+const VIEWER_ID_PATTERN = /^[a-zA-Z0-9._:-]+$/;
+
+function getPresentedViewerId(req: Request): string | null {
+  const header = req.header('x-proof-viewer-id');
+  if (typeof header !== 'string') return null;
+  const trimmed = header.trim();
+  if (!trimmed || trimmed.length > VIEWER_ID_MAX_LENGTH) return null;
+  if (!VIEWER_ID_PATTERN.test(trimmed)) return null;
+  return trimmed;
+}
+
+function getPresentedViewerName(req: Request): string | null {
+  const header = req.header('x-proof-viewer-name');
+  if (typeof header !== 'string') return null;
+  const trimmed = header.trim();
+  if (!trimmed) return null;
+  return trimmed.slice(0, 64);
+}
+
+function refreshViewerPresence(req: Request, slug: string): void {
+  const viewerId = getPresentedViewerId(req);
+  if (!viewerId) return;
+  try {
+    upsertDocumentViewer(slug, viewerId, getPresentedViewerName(req));
+  } catch (error) {
+    console.warn('[agent-routes] upsertDocumentViewer failed', { slug, error });
+  }
+}
+
 function checkAuth(
   req: Request,
   res: Response,
@@ -865,6 +897,7 @@ function checkAuth(
     });
     return null;
   }
+  refreshViewerPresence(req, slug);
   return role;
 }
 
@@ -2999,6 +3032,41 @@ agentRoutes.post('/:slug/edit', async (req: Request, res: Response) => {
 
   storeIdempotentMutationResult(replay, mutationRoute, slug, 200, responseBody);
   sendMutationResponse(res, 200, responseBody, { route: mutationRoute, slug });
+});
+
+/**
+ * Typeahead source for @-mention composers. Returns up to `limit` viewers
+ * known to have participated on this slug, ordered by most recent activity.
+ *
+ * A "viewer" here = anyone who has presented a valid X-Proof-Viewer-Id on
+ * an authenticated request for this slug. Agent entries are folded in by
+ * the mentions unit (U4) once agent presence is consumable here; for now
+ * the endpoint is humans-only.
+ */
+agentRoutes.get('/:slug/viewers', (req: Request, res: Response) => {
+  const slug = getSlug(req);
+  if (!slug) {
+    res.status(400).json({ success: false, error: 'Invalid slug' });
+    return;
+  }
+  if (!checkAuth(req, res, slug, ['viewer', 'commenter', 'editor', 'owner_bot'])) return;
+
+  const limitRaw = Number.parseInt(String(req.query.limit ?? '20'), 10);
+  const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 100) : 20;
+
+  const humans = listRecentDocumentViewers(slug, limit).map((row) => ({
+    kind: 'human' as const,
+    viewerId: row.viewer_id,
+    displayName: row.display_name ?? 'Anonymous',
+    lastSeenAt: row.last_seen_at,
+  }));
+
+  res.json({
+    success: true,
+    slug,
+    viewers: humans,
+    count: humans.length,
+  });
 });
 
 agentRoutes.post('/:slug/presence', (req: Request, res: Response) => {

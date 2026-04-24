@@ -6,6 +6,7 @@ import {
   getDocumentAuthStateBySlug,
   getRecentDocumentLiveCollabLeaseBreakdown,
   resolveDocumentAccess,
+  upsertDocumentViewer,
 } from './db.js';
 import type { ShareRole } from './share-types.js';
 import {
@@ -24,6 +25,7 @@ interface Client {
   clientId: string;
   slug: string;
   name?: string;
+  viewerId?: string;
   bridgeCapable: boolean;
   role: ShareRole;
 }
@@ -367,6 +369,17 @@ function handleMessage(sender: Client, message: Record<string, unknown>): void {
       : 'Anonymous';
     const capabilities = isRecord(message.capabilities) ? message.capabilities : {};
     sender.bridgeCapable = capabilities.bridge === true;
+    const viewerId = typeof message.viewerId === 'string' && message.viewerId.trim()
+      ? message.viewerId.trim()
+      : null;
+    if (viewerId) {
+      sender.viewerId = viewerId;
+      try {
+        upsertDocumentViewer(sender.slug, viewerId, sender.name);
+      } catch (error) {
+        console.warn('[ws] upsertDocumentViewer failed', { slug: sender.slug, error });
+      }
+    }
     broadcastViewerList(sender.slug);
     return;
   }
@@ -384,6 +397,7 @@ function broadcastViewerList(slug: string): void {
   const viewers = Array.from(room).map((client) => ({
     clientId: client.clientId,
     name: client.name || 'Anonymous',
+    viewerId: client.viewerId ?? null,
   }));
 
   const payload = JSON.stringify({

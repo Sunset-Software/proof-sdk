@@ -5,6 +5,7 @@
 
 import { executeBridgeCall } from './bridge-executor';
 import { buildShareMutationBaseToken } from './share-mutation-base.js';
+import { getOrCreateViewerId } from './viewer-identity';
 
 export interface ShareDocument {
   slug: string;
@@ -264,7 +265,16 @@ export class ShareClient {
   }
 
   setViewerName(name: string): void {
+    if (this.viewerName === name) return;
     this.viewerName = name;
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.send({
+        type: 'viewer.identify',
+        name,
+        viewerId: getOrCreateViewerId(),
+        capabilities: { bridge: true },
+      });
+    }
   }
 
   private getApiBase(): string {
@@ -288,6 +298,10 @@ export class ShareClient {
     }
     if (this.everySessionToken) {
       headers.Authorization = `Bearer ${this.everySessionToken}`;
+    }
+    const viewerId = getOrCreateViewerId();
+    if (viewerId) {
+      headers['X-Proof-Viewer-Id'] = viewerId;
     }
     return headers;
   }
@@ -1048,6 +1062,7 @@ export class ShareClient {
           this.send({
             type: 'viewer.identify',
             name: this.viewerName ?? 'Anonymous',
+            viewerId: getOrCreateViewerId(),
             capabilities: { bridge: true },
           });
           return;
