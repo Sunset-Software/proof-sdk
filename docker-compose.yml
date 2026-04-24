@@ -1,0 +1,16 @@
+services:
+  proof-sdk:
+    build: .
+    container_name: proof-sdk
+    restart: always
+    ports:
+      - "4000:4000"
+    env_file: .env
+    environment:
+      PORT: "4000"
+      DATABASE_PATH: /app/data/proof-share.db
+    volumes:
+      - proof-data:/app/data
+
+volumes:
+  proof-data:
