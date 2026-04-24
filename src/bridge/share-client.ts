@@ -816,6 +816,95 @@ export class ShareClient {
   }
 
   /**
+   * Fetch the Inbox for the current viewer: comment threads with activity,
+   * ordered by most recent, with unread + mentionsMe flags. Returns an
+   * empty array on any failure so the UI can render cleanly.
+   */
+  async fetchInbox(
+    options?: { token?: string; mentioningMe?: boolean; fromAgents?: boolean }
+  ): Promise<{
+    threads: Array<{
+      threadId: string;
+      markId: string;
+      latestActivityAt: string;
+      latestText: string;
+      latestAuthor: string;
+      replyCount: number;
+      resolved: boolean;
+      mentionsMe: boolean;
+      unread: boolean;
+      quote: string;
+    }>;
+    unreadCount: number;
+  }> {
+    if (!this.slug) return { threads: [], unreadCount: 0 };
+    const params = new URLSearchParams();
+    if (options?.mentioningMe) {
+      // Server compares `mentioning` against the caller's viewerId; we pass
+      // a marker the server recognizes (the same viewerId via header — it
+      // just needs *something* non-empty to trigger the filter path).
+      const viewerId = (this.getShareAuthHeaders(options?.token) as Record<string, string>)['X-Proof-Viewer-Id'];
+      if (viewerId) params.set('mentioning', viewerId);
+    }
+    if (options?.fromAgents) params.set('fromAgents', '1');
+    const qs = params.toString();
+    const url = `${this.getApiBase()}/agent/${encodeURIComponent(this.slug)}/inbox${qs ? `?${qs}` : ''}`;
+    try {
+      const response = await fetch(url, {
+        headers: this.getShareAuthHeaders(options?.token),
+      });
+      if (!response.ok) return { threads: [], unreadCount: 0 };
+      const payload = await response.json().catch(() => null) as any;
+      return {
+        threads: Array.isArray(payload?.threads) ? payload.threads : [],
+        unreadCount: typeof payload?.unreadCount === 'number' ? payload.unreadCount : 0,
+      };
+    } catch {
+      return { threads: [], unreadCount: 0 };
+    }
+  }
+
+  /**
+   * Mark a single thread as seen for the presented viewer.
+   */
+  async markThreadSeen(threadId: string, options?: { token?: string }): Promise<boolean> {
+    if (!this.slug || !threadId) return false;
+    try {
+      const response = await fetch(
+        `${this.getApiBase()}/agent/${encodeURIComponent(this.slug)}/threads/${encodeURIComponent(threadId)}/seen`,
+        {
+          method: 'POST',
+          headers: this.getShareAuthHeaders(options?.token),
+        },
+      );
+      return response.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Mark all current comment threads as seen for the presented viewer.
+   */
+  async markAllThreadsSeen(options?: { token?: string }): Promise<number> {
+    if (!this.slug) return 0;
+    try {
+      const response = await fetch(
+        `${this.getApiBase()}/agent/${encodeURIComponent(this.slug)}/threads/seen-all`,
+        {
+          method: 'POST',
+          headers: this.getShareAuthHeaders(options?.token),
+        },
+      );
+      if (!response.ok) return 0;
+      const payload = await response.json().catch(() => null) as any;
+      return typeof payload?.marked === 'number' ? payload.marked : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
    * Fetch the viewer typeahead list for @-mentions on this slug.
    * Returns null on any failure — callers should handle gracefully by
    * rendering an empty suggestion list.

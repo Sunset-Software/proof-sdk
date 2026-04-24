@@ -1326,6 +1326,18 @@ class ProofEditorImpl implements ProofEditor {
             return [];
           }
         },
+        fetchInbox: async (filter) => {
+          try {
+            return await shareClient.fetchInbox({
+              mentioningMe: filter.mentioningMe,
+              fromAgents: filter.fromAgents,
+            });
+          } catch {
+            return { threads: [], unreadCount: 0 };
+          }
+        },
+        markThreadSeen: (threadId) => shareClient.markThreadSeen(threadId),
+        markAllThreadsSeen: () => shareClient.markAllThreadsSeen(),
       });
     } catch (error) {
       console.warn('[comments-sidebar] failed to mount', error);

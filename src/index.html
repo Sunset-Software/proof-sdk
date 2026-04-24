@@ -988,6 +988,112 @@
       color: #111;
       background: rgba(17, 17, 17, 0.05);
     }
+    .comments-sidebar-tabs {
+      display: flex;
+      gap: 4px;
+      padding: 0 12px;
+      border-bottom: 1px solid rgba(17, 17, 17, 0.06);
+    }
+    .comments-sidebar-tab {
+      position: relative;
+      background: transparent;
+      border: none;
+      padding: 10px 14px;
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 500;
+      color: #666;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .comments-sidebar-tab:hover {
+      color: #111;
+    }
+    .comments-sidebar-tab-active {
+      color: #111;
+      border-bottom-color: #111;
+    }
+    .comments-sidebar-tab-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 18px;
+      height: 18px;
+      padding: 0 5px;
+      border-radius: 10px;
+      background: #dc2626;
+      color: #fff;
+      font-size: 10px;
+      font-weight: 700;
+    }
+    .comments-sidebar-filter-chips {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .comments-sidebar-filter-chip {
+      background: rgba(17, 17, 17, 0.04);
+      border: none;
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-family: inherit;
+      font-size: 11px;
+      font-weight: 500;
+      color: #555;
+      cursor: pointer;
+    }
+    .comments-sidebar-filter-chip:hover {
+      background: rgba(17, 17, 17, 0.08);
+    }
+    .comments-sidebar-filter-chip-active {
+      background: #111;
+      color: #fff;
+    }
+    .comments-sidebar-filter-chip-active:hover {
+      background: #2d2d2d;
+    }
+    .comments-sidebar-mark-all {
+      margin-left: auto;
+      background: transparent;
+      border: none;
+      color: #2563eb;
+      font-family: inherit;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      padding: 4px 6px;
+      border-radius: 6px;
+    }
+    .comments-sidebar-mark-all:hover {
+      background: rgba(37, 99, 235, 0.08);
+    }
+    .comments-sidebar-row-inbox {
+      cursor: pointer;
+      padding: 12px 18px;
+    }
+    .comments-sidebar-row-inbox:hover {
+      background: rgba(17, 17, 17, 0.03);
+    }
+    .comments-sidebar-row-unread {
+      border-left: 3px solid #0ea5e9;
+      padding-left: 15px;
+    }
+    .comments-sidebar-unread-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #0ea5e9;
+      margin-right: 2px;
+    }
+    .comments-sidebar-chip-mentions {
+      background: rgba(245, 158, 11, 0.18);
+      color: #92400e;
+    }
     .comments-sidebar-filters {
       padding: 8px 18px 10px;
       border-bottom: 1px solid rgba(17, 17, 17, 0.04);

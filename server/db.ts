@@ -1090,6 +1090,18 @@ function initDatabase(): void {
   d.exec('CREATE INDEX IF NOT EXISTS idx_document_viewers_slug_last_seen ON document_viewers(document_slug, last_seen_at DESC)');
 
   d.exec(`
+    CREATE TABLE IF NOT EXISTS document_thread_seen (
+      document_slug TEXT NOT NULL,
+      viewer_id TEXT NOT NULL,
+      thread_id TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL,
+      PRIMARY KEY (document_slug, viewer_id, thread_id),
+      FOREIGN KEY (document_slug) REFERENCES documents(slug)
+    )
+  `);
+  d.exec('CREATE INDEX IF NOT EXISTS idx_document_thread_seen_viewer ON document_thread_seen(document_slug, viewer_id)');
+
+  d.exec(`
     CREATE TABLE IF NOT EXISTS document_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       document_slug TEXT NOT NULL,
@@ -3930,4 +3942,83 @@ export function getDocumentViewer(
     WHERE document_slug = ? AND viewer_id = ?
     LIMIT 1
   `).get(slug, viewerId) as DocumentViewerRow | undefined;
+}
+
+export type DocumentThreadSeenRow = {
+  document_slug: string;
+  viewer_id: string;
+  thread_id: string;
+  last_seen_at: string;
+};
+
+/**
+ * Mark a single thread as seen by this viewer. Upsert — last_seen_at
+ * always advances to the current time.
+ */
+export function upsertDocumentThreadSeen(
+  slug: string,
+  viewerId: string,
+  threadId: string,
+): void {
+  assertWritesAllowed('upsertDocumentThreadSeen');
+  if (!slug || !viewerId || !threadId) return;
+  const now = new Date().toISOString();
+  getDb().prepare(`
+    INSERT INTO document_thread_seen (document_slug, viewer_id, thread_id, last_seen_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(document_slug, viewer_id, thread_id) DO UPDATE SET
+      last_seen_at = excluded.last_seen_at
+  `).run(slug, viewerId, threadId, now);
+}
+
+/**
+ * Mark many thread ids as seen for this viewer in a single transaction.
+ * Used by the "Mark all read" Inbox action.
+ */
+export function upsertDocumentThreadsSeen(
+  slug: string,
+  viewerId: string,
+  threadIds: string[],
+): number {
+  assertWritesAllowed('upsertDocumentThreadsSeen');
+  if (!slug || !viewerId || !Array.isArray(threadIds) || threadIds.length === 0) return 0;
+  const now = new Date().toISOString();
+  const stmt = getDb().prepare(`
+    INSERT INTO document_thread_seen (document_slug, viewer_id, thread_id, last_seen_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(document_slug, viewer_id, thread_id) DO UPDATE SET
+      last_seen_at = excluded.last_seen_at
+  `);
+  const tx = getDb().transaction((ids: string[]) => {
+    let count = 0;
+    for (const id of ids) {
+      if (typeof id === 'string' && id.trim()) {
+        stmt.run(slug, viewerId, id.trim(), now);
+        count += 1;
+      }
+    }
+    return count;
+  });
+  return tx(threadIds);
+}
+
+/**
+ * Return the document_thread_seen rows for this viewer on this slug,
+ * keyed by thread_id for O(1) lookup during Inbox materialization.
+ */
+export function getThreadSeenMapForViewer(
+  slug: string,
+  viewerId: string,
+): Map<string, string> {
+  const map = new Map<string, string>();
+  if (!slug || !viewerId) return map;
+  const rows = getDb().prepare(`
+    SELECT thread_id, last_seen_at
+    FROM document_thread_seen
+    WHERE document_slug = ? AND viewer_id = ?
+  `).all(slug, viewerId) as Array<{ thread_id: string; last_seen_at: string }>;
+  for (const row of rows) {
+    map.set(row.thread_id, row.last_seen_at);
+  }
+  return map;
 }

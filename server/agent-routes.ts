@@ -6,10 +6,13 @@ import {
   bumpDocumentAccessEpoch,
   getDocumentBySlug,
   getDocumentProjectionBySlug,
+  getThreadSeenMapForViewer,
   listDocumentEvents,
   listRecentDocumentViewers,
   rebuildDocumentBlocks,
   resolveDocumentAccessRole,
+  upsertDocumentThreadSeen,
+  upsertDocumentThreadsSeen,
   upsertDocumentViewer,
 } from './db.js';
 import {
@@ -3067,6 +3070,227 @@ agentRoutes.get('/:slug/viewers', (req: Request, res: Response) => {
     viewers: humans,
     count: humans.length,
   });
+});
+
+type InboxRow = {
+  threadId: string;
+  markId: string;
+  latestActivityAt: string;
+  latestText: string;
+  latestAuthor: string;
+  replyCount: number;
+  resolved: boolean;
+  mentionsMe: boolean;
+  unread: boolean;
+  quote: string;
+};
+
+function collectInboxRows(
+  marks: Record<string, StoredMark>,
+  viewerId: string,
+  seenMap: Map<string, string>,
+): InboxRow[] {
+  const rows: InboxRow[] = [];
+  for (const [markId, mark] of Object.entries(marks)) {
+    if (mark.kind !== 'comment') continue;
+    const threadId = (typeof mark.threadId === 'string' && mark.threadId) ? mark.threadId : markId;
+    const replies = Array.isArray(mark.replies)
+      ? mark.replies
+      : Array.isArray(mark.thread)
+        ? (mark.thread as Array<{ by?: string; text?: string; at?: string }>)
+        : [];
+    const latestReply = replies.length > 0 ? replies[replies.length - 1] : null;
+    const latestActivityAt = (typeof latestReply?.at === 'string' && latestReply.at)
+      || (typeof mark.createdAt === 'string' ? mark.createdAt : '')
+      || '';
+    const latestText = typeof latestReply?.text === 'string'
+      ? latestReply.text
+      : (typeof mark.text === 'string' ? mark.text : '');
+    const latestAuthor = typeof latestReply?.by === 'string' && latestReply.by
+      ? latestReply.by
+      : (typeof mark.by === 'string' ? mark.by : 'ai:unknown');
+
+    const lastSeenAt = seenMap.get(threadId) ?? '';
+    const unread = latestActivityAt.length > 0 && latestActivityAt > lastSeenAt;
+
+    const commentMentions = Array.isArray((mark as any).mentions) ? (mark as any).mentions : [];
+    const replyMentions = replies.flatMap((r: any) => Array.isArray(r.mentions) ? r.mentions : []);
+    const mentionsMe = [...commentMentions, ...replyMentions].some(
+      (m: any) => typeof m?.viewerId === 'string' && m.viewerId === viewerId,
+    );
+
+    rows.push({
+      threadId,
+      markId,
+      latestActivityAt,
+      latestText,
+      latestAuthor,
+      replyCount: replies.length,
+      resolved: Boolean((mark as any).resolved),
+      mentionsMe,
+      unread,
+      quote: typeof mark.quote === 'string' ? mark.quote : '',
+    });
+  }
+  rows.sort((a, b) => b.latestActivityAt.localeCompare(a.latestActivityAt));
+  return rows;
+}
+
+/**
+ * Inbox for the presented viewer. Returns comment threads with activity
+ * since the viewer's last-seen timestamp, sorted by most recent activity.
+ * Supports an optional `mentioning=<viewerId>` filter (typically the
+ * caller's own viewerId — used for the "Mentioning me" sidebar filter).
+ */
+agentRoutes.get('/:slug/inbox', (req: Request, res: Response) => {
+  const slug = getSlug(req);
+  if (!slug) {
+    res.status(400).json({ success: false, error: 'Invalid slug' });
+    return;
+  }
+  if (!checkAuth(req, res, slug, ['viewer', 'commenter', 'editor', 'owner_bot'])) return;
+
+  const viewerId = getPresentedViewerId(req);
+  if (!viewerId) {
+    res.status(400).json({
+      success: false,
+      code: 'MISSING_VIEWER_ID',
+      error: 'Inbox requires an X-Proof-Viewer-Id header',
+    });
+    return;
+  }
+
+  const doc = getDocumentBySlug(slug);
+  if (!doc) {
+    res.status(404).json({ success: false, error: 'Document not found' });
+    return;
+  }
+  let marks: Record<string, StoredMark> = {};
+  try {
+    marks = JSON.parse(doc.marks) as Record<string, StoredMark>;
+  } catch {
+    marks = {};
+  }
+
+  const seenMap = getThreadSeenMapForViewer(slug, viewerId);
+  let rows = collectInboxRows(marks, viewerId, seenMap);
+
+  const mentioning = typeof req.query.mentioning === 'string' ? req.query.mentioning.trim() : '';
+  if (mentioning) {
+    rows = rows.filter((row) => {
+      if (mentioning === viewerId) return row.mentionsMe;
+      const commentMentions = Array.isArray((marks[row.markId] as any).mentions)
+        ? (marks[row.markId] as any).mentions
+        : [];
+      const replyMentions = (Array.isArray((marks[row.markId] as any).replies)
+        ? (marks[row.markId] as any).replies
+        : []).flatMap((r: any) => Array.isArray(r.mentions) ? r.mentions : []);
+      return [...commentMentions, ...replyMentions].some(
+        (m: any) => typeof m?.viewerId === 'string' && m.viewerId === mentioning,
+      );
+    });
+  }
+
+  const fromAgents = req.query.fromAgents === '1' || req.query.fromAgents === 'true';
+  if (fromAgents) {
+    rows = rows.filter((row) => row.latestAuthor.startsWith('ai:'));
+  }
+
+  res.json({
+    success: true,
+    slug,
+    viewerId,
+    threads: rows,
+    unreadCount: rows.filter((r) => r.unread).length,
+  });
+});
+
+/**
+ * Mark a single thread as read for the presented viewer.
+ */
+agentRoutes.post('/:slug/threads/:threadId/seen', (req: Request, res: Response) => {
+  const slug = getSlug(req);
+  const threadIdParam = typeof req.params.threadId === 'string' ? req.params.threadId.trim() : '';
+  if (!slug || !threadIdParam) {
+    res.status(400).json({ success: false, error: 'Invalid slug or threadId' });
+    return;
+  }
+  if (!checkAuth(req, res, slug, ['viewer', 'commenter', 'editor', 'owner_bot'])) return;
+  const viewerId = getPresentedViewerId(req);
+  if (!viewerId) {
+    res.status(400).json({
+      success: false,
+      code: 'MISSING_VIEWER_ID',
+      error: 'Marking a thread seen requires an X-Proof-Viewer-Id header',
+    });
+    return;
+  }
+
+  // Verify the thread actually exists on this doc before writing — prevents
+  // filling the seen table with arbitrary forged thread IDs.
+  const doc = getDocumentBySlug(slug);
+  if (!doc) {
+    res.status(404).json({ success: false, error: 'Document not found' });
+    return;
+  }
+  let marks: Record<string, StoredMark> = {};
+  try {
+    marks = JSON.parse(doc.marks) as Record<string, StoredMark>;
+  } catch {
+    marks = {};
+  }
+  const threadExists = Object.entries(marks).some(([markId, mark]) => {
+    if (mark.kind !== 'comment') return false;
+    const tid = typeof mark.threadId === 'string' && mark.threadId ? mark.threadId : markId;
+    return tid === threadIdParam;
+  });
+  if (!threadExists) {
+    res.status(404).json({ success: false, error: 'Thread not found' });
+    return;
+  }
+
+  upsertDocumentThreadSeen(slug, viewerId, threadIdParam);
+  res.json({ success: true, slug, threadId: threadIdParam });
+});
+
+/**
+ * Mark every comment thread on this doc as seen for the presented viewer.
+ */
+agentRoutes.post('/:slug/threads/seen-all', (req: Request, res: Response) => {
+  const slug = getSlug(req);
+  if (!slug) {
+    res.status(400).json({ success: false, error: 'Invalid slug' });
+    return;
+  }
+  if (!checkAuth(req, res, slug, ['viewer', 'commenter', 'editor', 'owner_bot'])) return;
+  const viewerId = getPresentedViewerId(req);
+  if (!viewerId) {
+    res.status(400).json({
+      success: false,
+      code: 'MISSING_VIEWER_ID',
+      error: 'Mark-all-seen requires an X-Proof-Viewer-Id header',
+    });
+    return;
+  }
+  const doc = getDocumentBySlug(slug);
+  if (!doc) {
+    res.status(404).json({ success: false, error: 'Document not found' });
+    return;
+  }
+  let marks: Record<string, StoredMark> = {};
+  try {
+    marks = JSON.parse(doc.marks) as Record<string, StoredMark>;
+  } catch {
+    marks = {};
+  }
+  const threadIds = new Set<string>();
+  for (const [markId, mark] of Object.entries(marks)) {
+    if (mark.kind !== 'comment') continue;
+    const tid = typeof mark.threadId === 'string' && mark.threadId ? mark.threadId : markId;
+    threadIds.add(tid);
+  }
+  const marked = upsertDocumentThreadsSeen(slug, viewerId, Array.from(threadIds));
+  res.json({ success: true, slug, marked });
 });
 
 agentRoutes.post('/:slug/presence', (req: Request, res: Response) => {

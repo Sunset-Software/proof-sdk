@@ -54,6 +54,31 @@ export interface CommentsSidebarOptions {
    * as a plain-text reply.
    */
   fetchMentionCandidates?: (query: string) => Promise<MentionCandidate[]>;
+  /**
+   * Fetch the viewer's Inbox — threads with activity since last visit.
+   * When omitted, the Inbox tab is hidden and only the Doc tab renders.
+   */
+  fetchInbox?: (filter: { mentioningMe?: boolean; fromAgents?: boolean }) => Promise<{
+    threads: InboxThread[];
+    unreadCount: number;
+  }>;
+  /** Mark a single thread read for the current viewer. */
+  markThreadSeen?: (threadId: string) => Promise<boolean>;
+  /** Mark every thread on this doc read for the current viewer. */
+  markAllThreadsSeen?: () => Promise<number>;
+}
+
+export interface InboxThread {
+  threadId: string;
+  markId: string;
+  latestActivityAt: string;
+  latestText: string;
+  latestAuthor: string;
+  replyCount: number;
+  resolved: boolean;
+  mentionsMe: boolean;
+  unread: boolean;
+  quote: string;
 }
 
 interface ThreadRow {
@@ -201,6 +226,16 @@ export function initCommentsSidebar(options: CommentsSidebarOptions): CommentsSi
   const getAuthorLabel = options.getAuthorLabel ?? (() => 'human:Anonymous');
   const postReplyFn = options.postReply ?? null;
   const fetchMentionCandidatesFn = options.fetchMentionCandidates ?? null;
+  const fetchInboxFn = options.fetchInbox ?? null;
+  const markThreadSeenFn = options.markThreadSeen ?? null;
+  const markAllThreadsSeenFn = options.markAllThreadsSeen ?? null;
+  const inboxAvailable = Boolean(fetchInboxFn);
+  type ActiveTab = 'doc' | 'inbox';
+  type InboxFilter = 'all' | 'mentioningMe' | 'fromAgents';
+  let activeTab: ActiveTab = 'doc';
+  let inboxFilter: InboxFilter = 'all';
+  let inboxCache: { threads: InboxThread[]; unreadCount: number } = { threads: [], unreadCount: 0 };
+  let inboxInFlight = false;
 
   let collapsed = readLocalFlag(COLLAPSED_STORAGE_KEY);
   let showResolved = readLocalFlag(SHOW_RESOLVED_STORAGE_KEY);
@@ -247,28 +282,45 @@ export function initCommentsSidebar(options: CommentsSidebarOptions): CommentsSi
   header.appendChild(title);
   header.appendChild(closeButton);
 
-  const filters = document.createElement('div');
-  filters.className = 'comments-sidebar-filters';
-  const resolvedToggle = document.createElement('label');
-  resolvedToggle.className = 'comments-sidebar-resolved-toggle';
-  const resolvedCheckbox = document.createElement('input');
-  resolvedCheckbox.type = 'checkbox';
-  resolvedCheckbox.checked = showResolved;
-  resolvedCheckbox.addEventListener('change', () => {
-    showResolved = resolvedCheckbox.checked;
-    writeLocalFlag(SHOW_RESOLVED_STORAGE_KEY, showResolved);
+  // Tabs.
+  const tabs = document.createElement('div');
+  tabs.className = 'comments-sidebar-tabs';
+  const docTabBtn = document.createElement('button');
+  docTabBtn.type = 'button';
+  docTabBtn.className = 'comments-sidebar-tab comments-sidebar-tab-active';
+  docTabBtn.textContent = 'Doc';
+  docTabBtn.addEventListener('click', () => {
+    if (activeTab === 'doc') return;
+    activeTab = 'doc';
     render();
   });
-  const resolvedLabel = document.createElement('span');
-  resolvedLabel.textContent = 'Show resolved';
-  resolvedToggle.appendChild(resolvedCheckbox);
-  resolvedToggle.appendChild(resolvedLabel);
-  filters.appendChild(resolvedToggle);
+  const inboxTabBtn = document.createElement('button');
+  inboxTabBtn.type = 'button';
+  inboxTabBtn.className = 'comments-sidebar-tab';
+  inboxTabBtn.textContent = 'Inbox';
+  const inboxBadge = document.createElement('span');
+  inboxBadge.className = 'comments-sidebar-tab-badge';
+  inboxBadge.hidden = true;
+  inboxTabBtn.appendChild(inboxBadge);
+  inboxTabBtn.addEventListener('click', () => {
+    if (!inboxAvailable) return;
+    if (activeTab === 'inbox') return;
+    activeTab = 'inbox';
+    void refreshInbox();
+    render();
+  });
+  tabs.appendChild(docTabBtn);
+  if (inboxAvailable) tabs.appendChild(inboxTabBtn);
+
+  // Filters row — contents change per tab.
+  const filters = document.createElement('div');
+  filters.className = 'comments-sidebar-filters';
 
   const list = document.createElement('div');
   list.className = 'comments-sidebar-list';
 
   panel.appendChild(header);
+  panel.appendChild(tabs);
   panel.appendChild(filters);
   panel.appendChild(list);
 
@@ -282,7 +334,103 @@ export function initCommentsSidebar(options: CommentsSidebarOptions): CommentsSi
 
   let lastRows: { active: ThreadRow[]; detached: ThreadRow[] } = { active: [], detached: [] };
 
+  async function refreshInbox(): Promise<void> {
+    if (!fetchInboxFn || inboxInFlight) return;
+    inboxInFlight = true;
+    try {
+      const result = await fetchInboxFn({
+        mentioningMe: inboxFilter === 'mentioningMe',
+        fromAgents: inboxFilter === 'fromAgents',
+      });
+      inboxCache = result;
+      if (activeTab === 'inbox') render();
+      else {
+        // Still update the badge even when the Inbox isn't visible.
+        updateInboxBadge();
+      }
+    } finally {
+      inboxInFlight = false;
+    }
+  }
+
+  function updateInboxBadge(): void {
+    if (!inboxAvailable) return;
+    if (inboxCache.unreadCount > 0) {
+      inboxBadge.hidden = false;
+      inboxBadge.textContent = inboxCache.unreadCount > 99 ? '99+' : String(inboxCache.unreadCount);
+    } else {
+      inboxBadge.hidden = true;
+      inboxBadge.textContent = '';
+    }
+  }
+
+  function renderFilters(): void {
+    filters.textContent = '';
+    if (activeTab === 'doc') {
+      const resolvedToggle = document.createElement('label');
+      resolvedToggle.className = 'comments-sidebar-resolved-toggle';
+      const resolvedCheckbox = document.createElement('input');
+      resolvedCheckbox.type = 'checkbox';
+      resolvedCheckbox.checked = showResolved;
+      resolvedCheckbox.addEventListener('change', () => {
+        showResolved = resolvedCheckbox.checked;
+        writeLocalFlag(SHOW_RESOLVED_STORAGE_KEY, showResolved);
+        render();
+      });
+      const resolvedLabel = document.createElement('span');
+      resolvedLabel.textContent = 'Show resolved';
+      resolvedToggle.appendChild(resolvedCheckbox);
+      resolvedToggle.appendChild(resolvedLabel);
+      filters.appendChild(resolvedToggle);
+    } else {
+      const chipRow = document.createElement('div');
+      chipRow.className = 'comments-sidebar-filter-chips';
+      (['all', 'mentioningMe', 'fromAgents'] as InboxFilter[]).forEach((key) => {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'comments-sidebar-filter-chip';
+        if (inboxFilter === key) chip.classList.add('comments-sidebar-filter-chip-active');
+        chip.textContent = key === 'all' ? 'All' : key === 'mentioningMe' ? 'Mentioning me' : 'From agents';
+        chip.addEventListener('click', () => {
+          if (inboxFilter === key) return;
+          inboxFilter = key;
+          void refreshInbox();
+          render();
+        });
+        chipRow.appendChild(chip);
+      });
+      filters.appendChild(chipRow);
+
+      if (markAllThreadsSeenFn && inboxCache.unreadCount > 0) {
+        const markAll = document.createElement('button');
+        markAll.type = 'button';
+        markAll.className = 'comments-sidebar-mark-all';
+        markAll.textContent = 'Mark all read';
+        markAll.addEventListener('click', async () => {
+          await markAllThreadsSeenFn();
+          await refreshInbox();
+        });
+        filters.appendChild(markAll);
+      }
+    }
+  }
+
   function render(): void {
+    // Update tab state.
+    docTabBtn.classList.toggle('comments-sidebar-tab-active', activeTab === 'doc');
+    inboxTabBtn.classList.toggle('comments-sidebar-tab-active', activeTab === 'inbox');
+    updateInboxBadge();
+    renderFilters();
+
+    list.textContent = '';
+    if (activeTab === 'doc') {
+      renderDocList();
+    } else {
+      renderInboxList();
+    }
+  }
+
+  function renderDocList(): void {
     const marks = getMarks(view.state);
     const rows = deriveCommentRows(marks);
     lastRows = rows;
@@ -290,8 +438,6 @@ export function initCommentsSidebar(options: CommentsSidebarOptions): CommentsSi
     const visibleActive = showResolved
       ? rows.active
       : rows.active.filter((row) => !row.resolved);
-
-    list.textContent = '';
 
     if (visibleActive.length === 0 && rows.detached.length === 0) {
       const empty = document.createElement('div');
@@ -316,6 +462,83 @@ export function initCommentsSidebar(options: CommentsSidebarOptions): CommentsSi
         list.appendChild(renderRow(row));
       }
     }
+  }
+
+  function renderInboxList(): void {
+    if (inboxCache.threads.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'comments-sidebar-empty';
+      empty.textContent = inboxInFlight ? 'Loading…' : 'You’re all caught up.';
+      list.appendChild(empty);
+      return;
+    }
+    for (const thread of inboxCache.threads) {
+      list.appendChild(renderInboxRow(thread));
+    }
+  }
+
+  function renderInboxRow(thread: InboxThread): HTMLElement {
+    const rowEl = document.createElement('button');
+    rowEl.type = 'button';
+    rowEl.className = 'comments-sidebar-row comments-sidebar-row-inbox';
+    if (thread.unread) rowEl.classList.add('comments-sidebar-row-unread');
+    if (thread.resolved) rowEl.classList.add('comments-sidebar-row-resolved');
+    rowEl.dataset.threadId = thread.threadId;
+
+    const snippet = document.createElement('div');
+    snippet.className = 'comments-sidebar-quote';
+    snippet.textContent = (thread.latestText || thread.quote || '(no text)').slice(0, 240);
+    rowEl.appendChild(snippet);
+
+    const meta = document.createElement('div');
+    meta.className = 'comments-sidebar-meta';
+    if (thread.unread) {
+      const dot = document.createElement('span');
+      dot.className = 'comments-sidebar-unread-dot';
+      meta.appendChild(dot);
+    }
+    const author = formatAuthor(thread.latestAuthor);
+    const authorSpan = document.createElement('span');
+    authorSpan.className = author.isAgent
+      ? 'comments-sidebar-author comments-sidebar-author-agent'
+      : 'comments-sidebar-author';
+    authorSpan.textContent = author.label;
+    meta.appendChild(authorSpan);
+    const time = document.createElement('span');
+    time.className = 'comments-sidebar-time';
+    time.textContent = formatRelativeTime(thread.latestActivityAt, now());
+    meta.appendChild(time);
+    if (thread.mentionsMe) {
+      const chip = document.createElement('span');
+      chip.className = 'comments-sidebar-chip comments-sidebar-chip-mentions';
+      chip.textContent = '@ you';
+      meta.appendChild(chip);
+    }
+    if (thread.replyCount > 0) {
+      const chip = document.createElement('span');
+      chip.className = 'comments-sidebar-chip comments-sidebar-chip-replies';
+      chip.textContent = `${thread.replyCount}`;
+      meta.appendChild(chip);
+    }
+    rowEl.appendChild(meta);
+
+    rowEl.addEventListener('click', () => {
+      if (markThreadSeenFn) {
+        void markThreadSeenFn(thread.threadId).then(() => {
+          // Update local cache so the badge shrinks without waiting for a round-trip.
+          const prev = inboxCache.threads.find((t) => t.threadId === thread.threadId);
+          if (prev?.unread) {
+            prev.unread = false;
+            inboxCache.unreadCount = Math.max(0, inboxCache.unreadCount - 1);
+            updateInboxBadge();
+          }
+        });
+      }
+      scrollToMark(view, thread.markId);
+      openPopoverForMark(view, thread.markId);
+    });
+
+    return rowEl;
   }
 
   function renderRow(row: ThreadRow): HTMLElement {
@@ -537,6 +760,7 @@ export function initCommentsSidebar(options: CommentsSidebarOptions): CommentsSi
 
   applyCollapsedClass();
   render();
+  if (inboxAvailable) void refreshInbox();
 
   // Observe ProseMirror state changes by wrapping dispatchTransaction.
   // This is safe — it calls through to the existing dispatcher.
