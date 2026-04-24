@@ -875,7 +875,15 @@ function checkAuth(
   }
 
   const secret = getPresentedSecret(req, slug);
-  const role = secret ? resolveDocumentAccessRole(slug, secret) : null;
+  let role = secret ? resolveDocumentAccessRole(slug, secret) : null;
+  // Product decision: tokenless shares default to editable access ("slug
+  // is the secret"). This mirrors getAccessRole() in server/routes.ts so
+  // the first-party SPA sees consistent auth across PUT /documents/:slug
+  // and POST /marks/* routes. Tokenless callers still fail on routes that
+  // only accept `owner_bot`, since editor ∉ allowedRoles there.
+  if (!secret && !role && doc.share_state === 'ACTIVE') {
+    role = 'editor';
+  }
   const effectiveShareState = getEffectiveShareStateForRole(doc, role, Boolean(secret && role));
 
   if (effectiveShareState === 'REVOKED' && role !== 'owner_bot') {

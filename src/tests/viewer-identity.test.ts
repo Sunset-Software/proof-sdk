@@ -131,9 +131,12 @@ async function testServerEndpoint(): Promise<void> {
     const updated = getDocumentViewer(slug, viewerId);
     assert.equal(updated!.display_name, 'Renamed', 'display name updates on re-upsert');
 
-    // Typeahead requires auth.
+    // Tokenless access to ACTIVE shares is allowed ("slug is the secret"),
+    // matching the existing PUT /api/documents/:slug product decision.
+    // First-party SPA traffic hits /viewers without a cookie on clean URLs;
+    // the agent-routes checkAuth mirrors apiRoutes' lenient default.
     const unauthRes = await fetch(`${base}/api/agent/${slug}/viewers`);
-    assert.equal(unauthRes.status, 401, 'unauthenticated viewers endpoint returns 401');
+    assert.equal(unauthRes.status, 200, 'tokenless ACTIVE share gets editor-level access');
 
     // Malformed viewer ID (unsafe characters) is dropped, not persisted.
     const sneakyId = 'evil id with spaces <script>';
