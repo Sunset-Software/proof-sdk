@@ -781,6 +781,93 @@ export function initCommentsSidebar(options: CommentsSidebarOptions): CommentsSi
     });
   }
 
+  // Keyboard shortcuts: ] toggles, j/k cycle row focus, r focuses
+  // the composer on the active row, Escape collapses. Shortcuts are
+  // ignored while typing in an input or textarea.
+  function isEditingTarget(target: EventTarget | null): boolean {
+    if (!(target instanceof HTMLElement)) return false;
+    const tag = target.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return true;
+    if (target.isContentEditable) return true;
+    return false;
+  }
+  function focusedRowIndex(): number {
+    const rows = Array.from(list.querySelectorAll<HTMLElement>('.comments-sidebar-row'));
+    const active = document.activeElement;
+    for (let i = 0; i < rows.length; i += 1) {
+      const row = rows[i];
+      if (row === active) return i;
+      // For expanded non-button rows, check whether focus is inside.
+      if (row.contains(active as Node)) return i;
+    }
+    return -1;
+  }
+  function focusRow(index: number): boolean {
+    const rows = Array.from(list.querySelectorAll<HTMLElement>('.comments-sidebar-row'));
+    if (rows.length === 0) return false;
+    const clamped = ((index % rows.length) + rows.length) % rows.length;
+    const row = rows[clamped];
+    const focusable = row.matches('button') ? row : row.querySelector<HTMLElement>('.comments-sidebar-row-header') ?? row;
+    focusable.focus();
+    focusable.scrollIntoView({ block: 'nearest' });
+    return true;
+  }
+  function focusComposerForActiveRow(): void {
+    const idx = focusedRowIndex();
+    if (idx < 0) return;
+    const rows = Array.from(list.querySelectorAll<HTMLElement>('.comments-sidebar-row'));
+    const row = rows[idx];
+    const markId = row.dataset.markId;
+    if (!markId) return;
+    expandedMarkId = markId;
+    render();
+    // After render, the composer textarea is inside the re-rendered row.
+    const newRows = Array.from(list.querySelectorAll<HTMLElement>('.comments-sidebar-row'));
+    const newRow = newRows.find((r) => r.dataset.markId === markId);
+    const textarea = newRow?.querySelector<HTMLTextAreaElement>('.comments-sidebar-composer-textarea');
+    textarea?.focus();
+  }
+  function onKeyDown(event: KeyboardEvent): void {
+    // Global toggle — allow even from input context only if Meta is held to
+    // avoid capturing `]` the user is typing.
+    if (event.key === ']' && !event.metaKey && !event.ctrlKey) {
+      if (isEditingTarget(event.target)) return;
+      event.preventDefault();
+      collapsed = !collapsed;
+      writeLocalFlag(COLLAPSED_STORAGE_KEY, collapsed);
+      applyCollapsedClass();
+      return;
+    }
+    // Rail-scoped shortcuts only apply when focus is within the rail.
+    if (!root.contains(event.target as Node)) return;
+    if (isEditingTarget(event.target)) {
+      // Esc inside any input collapses the rail.
+      if (event.key === 'Escape' && (event.target as HTMLElement).tagName !== 'TEXTAREA') {
+        collapsed = true;
+        applyCollapsedClass();
+      }
+      return;
+    }
+    if (event.key === 'j' || event.key === 'ArrowDown') {
+      event.preventDefault();
+      const current = focusedRowIndex();
+      focusRow(current < 0 ? 0 : current + 1);
+    } else if (event.key === 'k' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      const current = focusedRowIndex();
+      focusRow(current < 0 ? 0 : current - 1);
+    } else if (event.key === 'r') {
+      event.preventDefault();
+      focusComposerForActiveRow();
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      collapsed = true;
+      writeLocalFlag(COLLAPSED_STORAGE_KEY, true);
+      applyCollapsedClass();
+    }
+  }
+  document.addEventListener('keydown', onKeyDown);
+
   // Observe ProseMirror state changes by wrapping dispatchTransaction.
   // This is safe — it calls through to the existing dispatcher.
   const originalDispatch = view.props.dispatchTransaction?.bind(view);
@@ -802,6 +889,7 @@ export function initCommentsSidebar(options: CommentsSidebarOptions): CommentsSi
     destroy: () => {
       view.setProps({ dispatchTransaction: originalDispatch });
       if (unsubscribeShareEvents) unsubscribeShareEvents();
+      document.removeEventListener('keydown', onKeyDown);
       root.remove();
     },
     rerender: render,

@@ -1338,10 +1338,48 @@
       60%  { box-shadow: 0 0 0 8px rgba(14, 165, 233, 0); }
       100% { box-shadow: 0 0 0 0 rgba(14, 165, 233, 0); }
     }
-    /* Narrow viewport fallback — hide the rail entirely. The mobile sheet
-       variant is added by U7. */
+    /* Mobile sheet variant: the sidebar becomes a bottom-docked full-width
+       sheet on narrow viewports. The toggle strip docks to the bottom-right
+       corner when collapsed. */
     @media (max-width: 900px) {
-      .comments-sidebar { display: none; }
+      .comments-sidebar {
+        left: 0;
+        right: 0;
+        top: auto;
+        bottom: 0;
+        width: 100%;
+        height: min(72vh, 560px);
+        flex-direction: column;
+      }
+      .comments-sidebar-panel {
+        border-left: none;
+        border-top: 1px solid rgba(17, 17, 17, 0.1);
+        border-radius: 14px 14px 0 0;
+        box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.18);
+      }
+      .comments-sidebar-toggle {
+        position: fixed;
+        bottom: 16px;
+        right: 16px;
+        left: auto;
+        top: auto;
+        width: 48px;
+        height: 48px;
+        border-radius: 50%;
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.18);
+        z-index: 200;
+      }
+      .comments-sidebar-collapsed .comments-sidebar-toggle {
+        right: 16px;
+      }
+      .comments-sidebar-collapsed {
+        width: 0;
+        height: 0;
+        pointer-events: none;
+      }
+      .comments-sidebar-collapsed .comments-sidebar-toggle {
+        pointer-events: auto;
+      }
     }
 
     /* Prism.js Syntax Highlighting */
