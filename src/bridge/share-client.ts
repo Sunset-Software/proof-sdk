@@ -778,7 +778,10 @@ export class ShareClient {
     markId: string,
     by: string,
     text: string,
-    options?: { token?: string }
+    options?: {
+      token?: string;
+      mentions?: Array<{ viewerId: string; displayName: string; startOffset: number; endOffset: number }>;
+    }
   ): Promise<ShareMarkMutationResponse | ShareRequestError | null> {
     if (!this.slug) return null;
     const trimmedMarkId = typeof markId === 'string' ? markId.trim() : '';
@@ -788,18 +791,66 @@ export class ShareClient {
     const base = await this.getMutationBase(options);
     if ('error' in base) return base;
 
+    const payload: Record<string, unknown> = {
+      markId: trimmedMarkId,
+      by: actor,
+      text: body,
+      ...base,
+    };
+    if (Array.isArray(options?.mentions) && options.mentions.length > 0) {
+      payload.mentions = options.mentions;
+    }
+
     const response = await fetch(`${this.getApiBase()}/agent/${encodeURIComponent(this.slug)}/marks/reply`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         ...this.getShareAuthHeaders(options?.token),
       },
-      body: JSON.stringify({ markId: trimmedMarkId, by: actor, text: body, ...base }),
+      body: JSON.stringify(payload),
     });
     if (!response.ok) return this.parseRequestError(response);
-    const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
-    this.rememberObservedMutationBase(payload);
-    return this.parseShareMarkMutationResponse(payload);
+    const responsePayload = await response.json().catch(() => null) as Record<string, unknown> | null;
+    this.rememberObservedMutationBase(responsePayload);
+    return this.parseShareMarkMutationResponse(responsePayload);
+  }
+
+  /**
+   * Fetch the viewer typeahead list for @-mentions on this slug.
+   * Returns null on any failure — callers should handle gracefully by
+   * rendering an empty suggestion list.
+   */
+  async fetchMentionCandidates(
+    query: string,
+    options?: { token?: string; limit?: number }
+  ): Promise<Array<{ kind: 'human' | 'agent'; viewerId: string; displayName: string; lastSeenAt?: string }>> {
+    if (!this.slug) return [];
+    const limit = options?.limit && options.limit > 0 ? Math.min(options.limit, 100) : 20;
+    const url = `${this.getApiBase()}/agent/${encodeURIComponent(this.slug)}/viewers?limit=${limit}`;
+    try {
+      const response = await fetch(url, {
+        headers: this.getShareAuthHeaders(options?.token),
+      });
+      if (!response.ok) return [];
+      const payload = await response.json().catch(() => null) as {
+        viewers?: Array<{ kind?: 'human' | 'agent'; viewerId?: string; displayName?: string; lastSeenAt?: string }>;
+      } | null;
+      if (!payload?.viewers) return [];
+      const q = query.trim().toLowerCase();
+      const filtered = payload.viewers.filter((v) => {
+        if (!v.viewerId || !v.displayName) return false;
+        if (!q) return true;
+        return v.displayName.toLowerCase().includes(q);
+      });
+      return filtered.map((v) => ({
+        kind: v.kind ?? 'human',
+        viewerId: v.viewerId!,
+        displayName: v.displayName!,
+        lastSeenAt: v.lastSeenAt,
+      }));
+    } catch {
+      return [];
+    }
   }
 
   async resolveComment(

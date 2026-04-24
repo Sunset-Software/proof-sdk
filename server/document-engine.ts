@@ -333,6 +333,39 @@ function normalizeQuote(value: unknown): string {
   return value.replace(/\s+/g, ' ').trim();
 }
 
+const MENTION_ID_PATTERN = /^[a-zA-Z0-9._:-]{1,64}$/;
+const MENTION_MAX_PER_ENTRY = 32;
+
+/**
+ * Canonicalize incoming `mentions` payload. Drops any entry whose shape is
+ * invalid; never throws. Bounds the array to 32 entries to defend against
+ * runaway payloads. Does NOT verify the viewerId against the slug's
+ * viewer registry — that cross-check is a future tightening; this layer
+ * only shapes the data for safe persistence.
+ */
+function normalizeMentions(
+  value: unknown,
+  text: string,
+): Array<{ viewerId: string; displayName: string; startOffset: number; endOffset: number }> {
+  if (!Array.isArray(value)) return [];
+  const results: Array<{ viewerId: string; displayName: string; startOffset: number; endOffset: number }> = [];
+  const textLen = typeof text === 'string' ? text.length : 0;
+  for (const raw of value) {
+    if (results.length >= MENTION_MAX_PER_ENTRY) break;
+    if (!isRecord(raw)) continue;
+    const viewerId = typeof raw.viewerId === 'string' ? raw.viewerId.trim() : '';
+    if (!viewerId || !MENTION_ID_PATTERN.test(viewerId)) continue;
+    const displayName = typeof raw.displayName === 'string' ? raw.displayName.trim().slice(0, 64) : '';
+    if (!displayName) continue;
+    const startOffset = Number.isFinite(raw.startOffset) ? Math.trunc(raw.startOffset as number) : -1;
+    const endOffset = Number.isFinite(raw.endOffset) ? Math.trunc(raw.endOffset as number) : -1;
+    if (startOffset < 0 || endOffset <= startOffset) continue;
+    if (textLen > 0 && endOffset > textLen) continue;
+    results.push({ viewerId, displayName, startOffset, endOffset });
+  }
+  return results;
+}
+
 function parseRelativeCharOffset(value: unknown): number | null {
   if (typeof value !== 'string') return null;
   const match = value.match(/^char:(\d+)$/);
@@ -1624,6 +1657,7 @@ function addComment(
   const id = randomUUID();
   const now = new Date().toISOString();
   const marks = parseMarks(doc.marks);
+  const mentions = normalizeMentions(body.mentions, text);
   marks[id] = {
     kind: 'comment',
     by,
@@ -1636,8 +1670,9 @@ function addComment(
     ...(resolvedTarget ? { target: resolvedTarget } : {}),
     ...(selectionMetadata?.startRel ? { startRel: selectionMetadata.startRel } : {}),
     ...(selectionMetadata?.endRel ? { endRel: selectionMetadata.endRel } : {}),
+    ...(mentions.length > 0 ? { mentions } : {}),
   };
-  return persistMarks(slug, marks, by, 'comment.added', { markId: id, by, quote, text });
+  return persistMarks(slug, marks, by, 'comment.added', { markId: id, by, quote, text, mentions });
 }
 
 async function addCommentAsync(
@@ -1696,6 +1731,7 @@ async function addCommentAsync(
   const id = randomUUID();
   const now = new Date().toISOString();
   const marks = parseMarks(doc.marks);
+  const mentions = normalizeMentions(body.mentions, text);
   marks[id] = {
     kind: 'comment',
     by,
@@ -1708,8 +1744,9 @@ async function addCommentAsync(
     ...(resolvedTarget ? { target: resolvedTarget } : {}),
     ...(selectionMetadata?.startRel ? { startRel: selectionMetadata.startRel } : {}),
     ...(selectionMetadata?.endRel ? { endRel: selectionMetadata.endRel } : {}),
+    ...(mentions.length > 0 ? { mentions } : {}),
   };
-  return persistMarksAsync(slug, doc, marks, by, 'comment.added', { markId: id, by, quote, text }, context);
+  return persistMarksAsync(slug, doc, marks, by, 'comment.added', { markId: id, by, quote, text, mentions }, context);
 }
 
 function addSuggestion(
@@ -2575,9 +2612,16 @@ function replyComment(
     : [];
   const normalizedReplies = Array.isArray(existing.replies) ? existing.replies : [];
   const baseReplies = normalizedReplies.length >= threadReplies.length ? normalizedReplies : threadReplies;
-  const replies = [...baseReplies, { by, text, at: new Date().toISOString() }];
+  const mentions = normalizeMentions(body.mentions, text);
+  const newReply = {
+    by,
+    text,
+    at: new Date().toISOString(),
+    ...(mentions.length > 0 ? { mentions } : {}),
+  };
+  const replies = [...baseReplies, newReply];
   marks[markId] = { ...existing, thread: replies, replies, threadId: existing.threadId ?? markId };
-  return persistMarks(slug, marks, by, 'comment.replied', { markId, by, text });
+  return persistMarks(slug, marks, by, 'comment.replied', { markId, by, text, mentions });
 }
 
 async function replyCommentAsync(
@@ -2601,9 +2645,16 @@ async function replyCommentAsync(
     : [];
   const normalizedReplies = Array.isArray(existing.replies) ? existing.replies : [];
   const baseReplies = normalizedReplies.length >= threadReplies.length ? normalizedReplies : threadReplies;
-  const replies = [...baseReplies, { by, text, at: new Date().toISOString() }];
+  const mentions = normalizeMentions(body.mentions, text);
+  const newReply = {
+    by,
+    text,
+    at: new Date().toISOString(),
+    ...(mentions.length > 0 ? { mentions } : {}),
+  };
+  const replies = [...baseReplies, newReply];
   marks[markId] = { ...existing, thread: replies, replies, threadId: existing.threadId ?? markId };
-  return persistMarksAsync(slug, doc, marks, by, 'comment.replied', { markId, by, text }, context);
+  return persistMarksAsync(slug, doc, marks, by, 'comment.replied', { markId, by, text, mentions }, context);
 }
 
 function rewriteDocument(_slug: string, _body: JsonRecord): EngineExecutionResult {

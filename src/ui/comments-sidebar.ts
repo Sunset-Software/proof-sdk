@@ -15,6 +15,12 @@ import type { EditorView } from 'prosemirror-view';
 import type { Mark } from '../formats/marks';
 import { getMarks } from '../editor/plugins/marks';
 import { openPopoverForMark } from '../editor/plugins/mark-popover';
+import {
+  attachMentionTypeahead,
+  type MentionCandidate,
+  type MentionRef,
+  type MentionTypeaheadHandle,
+} from './mention-typeahead';
 
 // ---- Types ------------------------------------------------------
 
@@ -41,7 +47,13 @@ export interface CommentsSidebarOptions {
    * signals the sidebar to clear the composer and await the next
    * re-render. Non-ok results are surfaced as inline errors.
    */
-  postReply?: (markId: string, text: string) => Promise<PostReplyResult>;
+  postReply?: (markId: string, text: string, mentions?: MentionRef[]) => Promise<PostReplyResult>;
+  /**
+   * Fetch mention candidates (humans + agents) matching a query.
+   * When omitted, @-typeahead is disabled — the composer still works
+   * as a plain-text reply.
+   */
+  fetchMentionCandidates?: (query: string) => Promise<MentionCandidate[]>;
 }
 
 interface ThreadRow {
@@ -188,6 +200,7 @@ export function initCommentsSidebar(options: CommentsSidebarOptions): CommentsSi
   const now = options.now ?? (() => new Date());
   const getAuthorLabel = options.getAuthorLabel ?? (() => 'human:Anonymous');
   const postReplyFn = options.postReply ?? null;
+  const fetchMentionCandidatesFn = options.fetchMentionCandidates ?? null;
 
   let collapsed = readLocalFlag(COLLAPSED_STORAGE_KEY);
   let showResolved = readLocalFlag(SHOW_RESOLVED_STORAGE_KEY);
@@ -397,7 +410,7 @@ export function initCommentsSidebar(options: CommentsSidebarOptions): CommentsSi
 
     const textarea = document.createElement('textarea');
     textarea.className = 'comments-sidebar-composer-textarea';
-    textarea.placeholder = 'Write a reply…';
+    textarea.placeholder = fetchMentionCandidatesFn ? 'Write a reply… use @ to mention' : 'Write a reply…';
     textarea.rows = 3;
     textarea.value = drafts.get(markId) ?? '';
     textarea.dataset.composerMarkId = markId;
@@ -405,6 +418,14 @@ export function initCommentsSidebar(options: CommentsSidebarOptions): CommentsSi
       drafts.set(markId, textarea.value);
       updateSubmitState();
     });
+
+    let typeahead: MentionTypeaheadHandle | null = null;
+    if (fetchMentionCandidatesFn) {
+      typeahead = attachMentionTypeahead({
+        textarea,
+        fetchCandidates: fetchMentionCandidatesFn,
+      });
+    }
 
     const errorEl = document.createElement('div');
     errorEl.className = 'comments-sidebar-composer-error';
@@ -445,10 +466,19 @@ export function initCommentsSidebar(options: CommentsSidebarOptions): CommentsSi
       postButton.textContent = 'Posting…';
       updateSubmitState();
       errorEl.hidden = true;
+      // Only retain mentions whose token still appears in the (final) text.
+      // A user typing @Sam and then deleting the token should not leave a
+      // stale MentionRef in the payload.
+      const collectedMentions = typeahead ? typeahead.getMentions() : [];
+      const finalMentions = collectedMentions.filter((m) => {
+        const slice = text.slice(m.startOffset, m.endOffset);
+        return slice === `@${m.displayName}`;
+      });
       try {
-        const result = await postReplyFn(markId, text);
+        const result = await postReplyFn(markId, text, finalMentions);
         if (result.ok) {
           drafts.delete(markId);
+          typeahead?.resetMentions();
           expandedMarkId = null;
           render();
         } else {

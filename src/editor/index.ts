@@ -1296,10 +1296,12 @@ class ProofEditorImpl implements ProofEditor {
       this.commentsSidebarHandle = initCommentsSidebar({
         view,
         getAuthorLabel: () => `human:${this.shareViewerName || 'Anonymous'}`,
-        postReply: async (markId, text) => {
+        postReply: async (markId, text, mentions) => {
           try {
             const author = `human:${this.shareViewerName || 'Anonymous'}`;
-            const result = await shareClient.postCommentReply(markId, author, text);
+            const result = await shareClient.postCommentReply(markId, author, text, {
+              mentions: mentions && mentions.length > 0 ? mentions : undefined,
+            });
             if (!result) {
               return { ok: false, message: 'Reply is not available right now.' };
             }
@@ -1315,6 +1317,13 @@ class ProofEditorImpl implements ProofEditor {
               ok: false,
               message: err instanceof Error ? err.message : 'Reply failed',
             };
+          }
+        },
+        fetchMentionCandidates: async (query) => {
+          try {
+            return await shareClient.fetchMentionCandidates(query);
+          } catch {
+            return [];
           }
         },
       });

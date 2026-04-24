@@ -126,10 +126,26 @@ export interface MarkRange {
   to: number;
 }
 
+/**
+ * A structured mention reference. `viewerId` is authoritative — the display
+ * label can change over time, but the viewerId is the stable routing target
+ * for "was this user mentioned?" queries (Inbox, badges, etc).
+ *
+ * `startOffset` / `endOffset` are into the plain text field on the same
+ * mark or reply, and identify the `@Name` span to decorate as a chip.
+ */
+export interface MentionRef {
+  viewerId: string;
+  displayName: string;
+  startOffset: number;
+  endOffset: number;
+}
+
 export interface CommentReply {
   by: string;
   text: string;
   at: string;
+  mentions?: MentionRef[];
 }
 
 export interface AuthoredData {
@@ -222,6 +238,9 @@ export interface StoredMark {
   thread?: string | CommentReply[];
   threadId?: string;
   replies?: CommentReply[];
+  /** Structured mentions targeting the initial comment `text`. Replies carry
+   *  their own `mentions` on each CommentReply entry. */
+  mentions?: MentionRef[];
   resolved?: boolean;
   content?: string;
   status?: SuggestionStatus;

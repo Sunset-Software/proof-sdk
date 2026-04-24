@@ -1139,6 +1139,41 @@
       background: rgba(17, 17, 17, 0.25);
       cursor: not-allowed;
     }
+
+    /* @-mention typeahead popup */
+    .mention-typeahead-popup {
+      z-index: 220;
+      background: #ffffff;
+      border: 1px solid rgba(17, 17, 17, 0.12);
+      border-radius: 10px;
+      box-shadow: 0 14px 32px rgba(0, 0, 0, 0.12);
+      overflow: hidden;
+      max-height: 220px;
+      overflow-y: auto;
+      margin-top: 4px;
+    }
+    .mention-typeahead-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 8px 12px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .mention-typeahead-row-active {
+      background: rgba(14, 165, 233, 0.08);
+    }
+    .mention-typeahead-name {
+      font-weight: 600;
+      color: #111;
+    }
+    .mention-typeahead-meta {
+      font-size: 10px;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
     .comments-sidebar-row-resolved {
       opacity: 0.55;
     }
