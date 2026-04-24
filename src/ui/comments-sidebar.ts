@@ -66,6 +66,13 @@ export interface CommentsSidebarOptions {
   markThreadSeen?: (threadId: string) => Promise<boolean>;
   /** Mark every thread on this doc read for the current viewer. */
   markAllThreadsSeen?: () => Promise<number>;
+  /**
+   * Subscribe to live share-client events. Returns an unsubscribe.
+   * When provided, the sidebar listens for comment.activity and
+   * comment.mentioned frames and refreshes the Inbox on each, so the
+   * unread badge tracks real-time without polling.
+   */
+  subscribeShareEvents?: (handler: (message: Record<string, unknown>) => void) => () => void;
 }
 
 export interface InboxThread {
@@ -762,6 +769,18 @@ export function initCommentsSidebar(options: CommentsSidebarOptions): CommentsSi
   render();
   if (inboxAvailable) void refreshInbox();
 
+  // Subscribe to live events that invalidate the Inbox cache.
+  const subscribeShareEventsFn = options.subscribeShareEvents ?? null;
+  let unsubscribeShareEvents: (() => void) | null = null;
+  if (inboxAvailable && subscribeShareEventsFn) {
+    unsubscribeShareEvents = subscribeShareEventsFn((message) => {
+      const type = typeof message.type === 'string' ? message.type : '';
+      if (type === 'comment.activity' || type === 'comment.mentioned') {
+        void refreshInbox();
+      }
+    });
+  }
+
   // Observe ProseMirror state changes by wrapping dispatchTransaction.
   // This is safe — it calls through to the existing dispatcher.
   const originalDispatch = view.props.dispatchTransaction?.bind(view);
@@ -782,6 +801,7 @@ export function initCommentsSidebar(options: CommentsSidebarOptions): CommentsSi
   return {
     destroy: () => {
       view.setProps({ dispatchTransaction: originalDispatch });
+      if (unsubscribeShareEvents) unsubscribeShareEvents();
       root.remove();
     },
     rerender: render,

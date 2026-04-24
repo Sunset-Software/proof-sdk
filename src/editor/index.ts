@@ -1338,6 +1338,7 @@ class ProofEditorImpl implements ProofEditor {
         },
         markThreadSeen: (threadId) => shareClient.markThreadSeen(threadId),
         markAllThreadsSeen: () => shareClient.markAllThreadsSeen(),
+        subscribeShareEvents: (handler) => shareClient.onMessage(handler),
       });
     } catch (error) {
       console.warn('[comments-sidebar] failed to mount', error);

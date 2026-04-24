@@ -3685,6 +3685,74 @@ agentRoutes.post('/:slug/ops', async (req: Request, res: Response) => {
   sendMutationResponse(res, result.status, result.body, { route: mutationRoute, slug });
 });
 
+/**
+ * Emit sidebar-facing events after a successful comment or reply mutation.
+ *
+ * - comment.activity: fan-out to every connected client so Inbox state
+ *   refreshes live without polling.
+ * - comment.mentioned: only when the mutation persisted non-empty mentions;
+ *   used to increment badges for targeted viewers specifically.
+ *
+ * Both events are also written to the document_events feed so reconnecting
+ * clients catch up via GET /events/pending without special-case backfill.
+ */
+function emitCommentSidebarEvents(
+  slug: string,
+  result: { status: number; body: unknown },
+  actor: string,
+  byViewerId: string | null,
+): void {
+  if (result.status < 200 || result.status >= 300) return;
+  const body = isRecord(result.body) ? result.body : {};
+  const marks = isRecord(body.marks) ? body.marks : {};
+  const now = new Date().toISOString();
+
+  for (const [markId, value] of Object.entries(marks)) {
+    const mark = isRecord(value) ? value : {};
+    const threadId = typeof mark.threadId === 'string' && mark.threadId ? mark.threadId : markId;
+    const replies = Array.isArray(mark.replies) ? mark.replies : [];
+    const latest = replies.length > 0 ? replies[replies.length - 1] : null;
+    const latestMentions = isRecord(latest) && Array.isArray((latest as { mentions?: unknown }).mentions)
+      ? (latest as { mentions: Array<Record<string, unknown>> }).mentions
+      : [];
+    const rootMentions = Array.isArray((mark as { mentions?: unknown }).mentions)
+      ? ((mark as { mentions: Array<Record<string, unknown>> }).mentions)
+      : [];
+    // Mention events use the most recent layer's mentions — a reply's own,
+    // or the initial comment's when there are no replies.
+    const eventMentions = latest && latestMentions.length > 0
+      ? latestMentions
+      : (replies.length === 0 ? rootMentions : []);
+    const mentionedViewerIds = eventMentions
+      .map((m) => (typeof (m as { viewerId?: unknown }).viewerId === 'string' ? (m as { viewerId: string }).viewerId : ''))
+      .filter((id) => id.length > 0);
+
+    const activityPayload = {
+      markId,
+      threadId,
+      byViewerId,
+      byActor: actor,
+      replyCount: replies.length,
+      timestamp: now,
+    };
+    addDocumentEvent(slug, 'comment.activity', activityPayload, actor);
+    broadcastToRoom(slug, { type: 'comment.activity', source: 'agent-routes', ...activityPayload });
+
+    if (mentionedViewerIds.length > 0) {
+      const mentionPayload = {
+        markId,
+        threadId,
+        byViewerId,
+        byActor: actor,
+        mentionedViewerIds,
+        timestamp: now,
+      };
+      addDocumentEvent(slug, 'comment.mentioned', mentionPayload, actor);
+      broadcastToRoom(slug, { type: 'comment.mentioned', source: 'agent-routes', ...mentionPayload });
+    }
+  }
+}
+
 agentRoutes.post('/:slug/marks/comment', async (req: Request, res: Response) => {
   const mutationRoute = 'POST /marks/comment';
   const slug = getSlug(req);
@@ -3703,6 +3771,8 @@ agentRoutes.post('/:slug/marks/comment', async (req: Request, res: Response) => 
   storeIdempotentMutationResult(replay, mutationRoute, slug, result.status, result.body);
   if (result.status >= 200 && result.status < 300) {
     notifyCollabMutation(slug, buildParticipationFromMutation(req, slug, payload, { details: 'comment.add' }), { apply: false });
+    const actor = typeof payload.by === 'string' ? payload.by : 'ai:unknown';
+    emitCommentSidebarEvents(slug, result, actor, getPresentedViewerId(req));
   }
   sendMutationResponse(res, result.status, result.body, { route: mutationRoute, slug });
 });
@@ -3883,6 +3953,8 @@ agentRoutes.post('/:slug/marks/reply', async (req: Request, res: Response) => {
   storeIdempotentMutationResult(replay, mutationRoute, slug, result.status, result.body);
   if (result.status >= 200 && result.status < 300) {
     notifyCollabMutation(slug, buildParticipationFromMutation(req, slug, payload, { details: 'comment.reply' }), { apply: false });
+    const actor = typeof payload.by === 'string' ? payload.by : 'ai:unknown';
+    emitCommentSidebarEvents(slug, result, actor, getPresentedViewerId(req));
   }
   sendMutationResponse(res, result.status, result.body, { route: mutationRoute, slug });
 });
