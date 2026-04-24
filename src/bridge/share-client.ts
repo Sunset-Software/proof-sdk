@@ -303,6 +303,9 @@ export class ShareClient {
     if (viewerId) {
       headers['X-Proof-Viewer-Id'] = viewerId;
     }
+    if (this.viewerName && this.viewerName.trim()) {
+      headers['X-Proof-Viewer-Name'] = this.viewerName.trim();
+    }
     return headers;
   }
 
