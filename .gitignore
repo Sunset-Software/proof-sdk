@@ -1,6 +1,11 @@
 # Dependencies
 node_modules/
 
+# TLS material (Tailscale-issued certs, Let's Encrypt, etc.) — never commit
+*.crt
+*.key
+*.pem
+
 # Build output
 dist/
 dist-server/

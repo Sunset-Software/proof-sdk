@@ -11,7 +11,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build && node scripts/finalize-web-build.mjs",
-    "serve": "tsx server/index.ts",
+    "serve": "tsx --env-file-if-exists=.env server/index.ts",
     "test": "npm run test:proof-sdk && npm run test:server-routes-share",
     "test:proof-sdk": "tsx src/tests/proof-sdk-agent-bridge-client.test.ts",
     "test:server-routes-share": "tsx src/tests/server-routes-and-share.test.ts",
