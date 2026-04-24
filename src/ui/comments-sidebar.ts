@@ -1,10 +1,11 @@
 /**
  * Right-rail comments sidebar.
  *
- * Lists comment threads from the live marks plugin state with click-to-jump:
- * clicking a row scrolls the editor to the anchor, pulse-highlights the
- * mark range, and opens the existing inline popover focused on the reply
- * composer.
+ * Lists comment threads from the live marks plugin state. Clicking a row
+ * expands the thread inline — the initial comment, every reply, and the
+ * composer — and scrolls the editor to the anchor with a pulse highlight
+ * so the reader keeps their place. The sidebar is fully self-contained;
+ * it does not open the in-editor popover.
  *
  * Reads mark state via `getMarks(view.state)` and re-renders on every
  * dispatched transaction. This reuses the same source of truth as the
@@ -14,7 +15,6 @@
 import type { EditorView } from 'prosemirror-view';
 import type { Mark } from '../formats/marks';
 import { getMarks } from '../editor/plugins/marks';
-import { openPopoverForMark } from '../editor/plugins/mark-popover';
 import {
   attachMentionTypeahead,
   type MentionCandidate,
@@ -513,17 +513,26 @@ export function initCommentsSidebar(options: CommentsSidebarOptions): CommentsSi
   }
 
   function renderInboxRow(thread: InboxThread): HTMLElement {
-    const rowEl = document.createElement('button');
-    rowEl.type = 'button';
+    const rowEl = document.createElement('div');
     rowEl.className = 'comments-sidebar-row comments-sidebar-row-inbox';
     if (thread.unread) rowEl.classList.add('comments-sidebar-row-unread');
     if (thread.resolved) rowEl.classList.add('comments-sidebar-row-resolved');
     rowEl.dataset.threadId = thread.threadId;
+    rowEl.dataset.markId = thread.markId;
+
+    const isExpanded = expandedMarkId === thread.markId;
+    if (isExpanded) rowEl.classList.add('comments-sidebar-row-expanded');
+
+    const headerButton = document.createElement('button');
+    headerButton.type = 'button';
+    headerButton.className = 'comments-sidebar-row-header';
+    headerButton.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+    headerButton.setAttribute('aria-label', isExpanded ? 'Close thread' : 'Open thread');
 
     const snippet = document.createElement('div');
     snippet.className = 'comments-sidebar-quote';
     snippet.textContent = (thread.latestText || thread.quote || '(no text)').slice(0, 240);
-    rowEl.appendChild(snippet);
+    headerButton.appendChild(snippet);
 
     const meta = document.createElement('div');
     meta.className = 'comments-sidebar-meta';
@@ -555,12 +564,17 @@ export function initCommentsSidebar(options: CommentsSidebarOptions): CommentsSi
       chip.textContent = `${thread.replyCount}`;
       meta.appendChild(chip);
     }
-    rowEl.appendChild(meta);
+    headerButton.appendChild(meta);
 
-    rowEl.addEventListener('click', () => {
+    headerButton.addEventListener('click', () => {
+      if (expandedMarkId === thread.markId) {
+        expandedMarkId = null;
+        render();
+        return;
+      }
+      expandedMarkId = thread.markId;
       if (markThreadSeenFn) {
         void markThreadSeenFn(thread.threadId).then(() => {
-          // Update local cache so the badge shrinks without waiting for a round-trip.
           const prev = inboxCache.threads.find((t) => t.threadId === thread.threadId);
           if (prev?.unread) {
             prev.unread = false;
@@ -570,10 +584,37 @@ export function initCommentsSidebar(options: CommentsSidebarOptions): CommentsSi
         });
       }
       scrollToMark(view, thread.markId);
-      openPopoverForMark(view, thread.markId);
+      render();
     });
 
+    rowEl.appendChild(headerButton);
+
+    if (isExpanded) {
+      const localRow = buildRowFromMarkId(thread.markId);
+      if (localRow) {
+        rowEl.appendChild(renderThreadBody(localRow));
+        if (postReplyFn && !localRow.orphaned) {
+          rowEl.appendChild(renderComposer(thread.markId));
+        }
+      } else {
+        const missing = document.createElement('div');
+        missing.className = 'comments-sidebar-thread-empty';
+        missing.textContent = 'This thread is no longer available on the current document.';
+        rowEl.appendChild(missing);
+      }
+    }
+
     return rowEl;
+  }
+
+  /** Look up a ThreadRow for a markId from the live marks plugin state.
+   *  Returns null when the mark has been removed (e.g. accepted suggestion
+   *  cleanup). */
+  function buildRowFromMarkId(markId: string): ThreadRow | null {
+    const marks = getMarks(view.state);
+    const mark = marks.find((m) => m.id === markId);
+    if (!mark || mark.kind !== 'comment') return null;
+    return buildRow(mark);
   }
 
   function renderRow(row: ThreadRow): HTMLElement {
@@ -586,14 +627,20 @@ export function initCommentsSidebar(options: CommentsSidebarOptions): CommentsSi
     const isExpanded = expandedMarkId === row.markId;
     if (isExpanded) rowEl.classList.add('comments-sidebar-row-expanded');
 
-    // Clickable header — scroll + popover.
     const headerButton = document.createElement('button');
     headerButton.type = 'button';
     headerButton.className = 'comments-sidebar-row-header';
-    headerButton.setAttribute('aria-label', 'Open thread in editor');
+    headerButton.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+    headerButton.setAttribute('aria-label', isExpanded ? 'Close thread' : 'Open thread');
     headerButton.addEventListener('click', () => {
-      scrollToMark(view, row.markId);
-      openPopoverForMark(view, row.markId);
+      if (expandedMarkId === row.markId) {
+        expandedMarkId = null;
+        render();
+        return;
+      }
+      expandedMarkId = row.markId;
+      if (!row.orphaned) scrollToMark(view, row.markId);
+      render();
     });
 
     const quote = document.createElement('div');
@@ -632,28 +679,9 @@ export function initCommentsSidebar(options: CommentsSidebarOptions): CommentsSi
     headerButton.appendChild(meta);
     rowEl.appendChild(headerButton);
 
-    // Reply affordance and expandable thread + composer.
-    if (postReplyFn && !row.orphaned) {
-      const actions = document.createElement('div');
-      actions.className = 'comments-sidebar-row-actions';
-      const replyButton = document.createElement('button');
-      replyButton.type = 'button';
-      replyButton.className = 'comments-sidebar-row-reply-toggle';
-      replyButton.textContent = isExpanded ? 'Close' : (row.replyCount > 0 ? `View thread · ${row.replyCount} repl${row.replyCount === 1 ? 'y' : 'ies'}` : 'Reply');
-      replyButton.addEventListener('click', (event) => {
-        event.stopPropagation();
-        if (expandedMarkId === row.markId) {
-          expandedMarkId = null;
-        } else {
-          expandedMarkId = row.markId;
-        }
-        render();
-      });
-      actions.appendChild(replyButton);
-      rowEl.appendChild(actions);
-
-      if (isExpanded) {
-        rowEl.appendChild(renderThreadBody(row));
+    if (isExpanded) {
+      rowEl.appendChild(renderThreadBody(row));
+      if (postReplyFn && !row.orphaned) {
         rowEl.appendChild(renderComposer(row.markId));
       }
     }
