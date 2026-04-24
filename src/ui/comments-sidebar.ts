@@ -88,6 +88,12 @@ export interface InboxThread {
   quote: string;
 }
 
+interface ThreadEntry {
+  by: string;
+  text: string;
+  at: string;
+}
+
 interface ThreadRow {
   markId: string;
   quote: string;
@@ -97,6 +103,8 @@ interface ThreadRow {
   resolved: boolean;
   orphaned: boolean;
   rangeFrom: number | null;
+  /** Thread body: the initial comment plus any replies, in chronological order. */
+  entries: ThreadEntry[];
 }
 
 // ---- Row derivation --------------------------------------------
@@ -142,6 +150,25 @@ function buildRow(mark: Mark): ThreadRow {
   const latestReply = replies.length > 0 ? replies[replies.length - 1] : null;
   const lastActivityAt = latestReply?.at?.trim() || mark.at || '';
   const lastAuthor = latestReply?.by?.trim() || mark.by || 'ai:unknown';
+
+  // Thread body: initial comment + replies in chronological order.
+  const entries: ThreadEntry[] = [];
+  const initialText = typeof data.text === 'string' ? data.text : '';
+  if (initialText.trim() || mark.by) {
+    entries.push({
+      by: mark.by || 'ai:unknown',
+      text: initialText,
+      at: mark.at || '',
+    });
+  }
+  for (const reply of replies) {
+    entries.push({
+      by: typeof reply.by === 'string' ? reply.by : 'ai:unknown',
+      text: typeof reply.text === 'string' ? reply.text : '',
+      at: typeof reply.at === 'string' ? reply.at : '',
+    });
+  }
+
   return {
     markId: mark.id,
     quote: truncateQuote(mark.quote || ''),
@@ -151,6 +178,7 @@ function buildRow(mark: Mark): ThreadRow {
     resolved: data.resolved === true,
     orphaned: mark.orphaned === true || !mark.range,
     rangeFrom: mark.range?.from ?? null,
+    entries,
   };
 }
 
@@ -604,16 +632,14 @@ export function initCommentsSidebar(options: CommentsSidebarOptions): CommentsSi
     headerButton.appendChild(meta);
     rowEl.appendChild(headerButton);
 
-    // Reply affordance and expandable composer. Only shown when a postReply
-    // implementation is provided (local-only sidebars omit the composer
-    // entirely to avoid an affordance with no backend).
+    // Reply affordance and expandable thread + composer.
     if (postReplyFn && !row.orphaned) {
       const actions = document.createElement('div');
       actions.className = 'comments-sidebar-row-actions';
       const replyButton = document.createElement('button');
       replyButton.type = 'button';
       replyButton.className = 'comments-sidebar-row-reply-toggle';
-      replyButton.textContent = isExpanded ? 'Cancel' : 'Reply';
+      replyButton.textContent = isExpanded ? 'Close' : (row.replyCount > 0 ? `View thread · ${row.replyCount} repl${row.replyCount === 1 ? 'y' : 'ies'}` : 'Reply');
       replyButton.addEventListener('click', (event) => {
         event.stopPropagation();
         if (expandedMarkId === row.markId) {
@@ -627,11 +653,51 @@ export function initCommentsSidebar(options: CommentsSidebarOptions): CommentsSi
       rowEl.appendChild(actions);
 
       if (isExpanded) {
+        rowEl.appendChild(renderThreadBody(row));
         rowEl.appendChild(renderComposer(row.markId));
       }
     }
 
     return rowEl;
+  }
+
+  function renderThreadBody(row: ThreadRow): HTMLElement {
+    const container = document.createElement('div');
+    container.className = 'comments-sidebar-thread';
+    if (row.entries.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'comments-sidebar-thread-empty';
+      empty.textContent = '(no messages in this thread yet)';
+      container.appendChild(empty);
+      return container;
+    }
+    for (const entry of row.entries) {
+      const entryEl = document.createElement('div');
+      entryEl.className = 'comments-sidebar-thread-entry';
+
+      const header = document.createElement('div');
+      header.className = 'comments-sidebar-thread-header';
+      const author = formatAuthor(entry.by);
+      const authorSpan = document.createElement('span');
+      authorSpan.className = author.isAgent
+        ? 'comments-sidebar-author comments-sidebar-author-agent'
+        : 'comments-sidebar-author';
+      authorSpan.textContent = author.label;
+      header.appendChild(authorSpan);
+      const time = document.createElement('span');
+      time.className = 'comments-sidebar-time';
+      time.textContent = formatRelativeTime(entry.at, now());
+      header.appendChild(time);
+      entryEl.appendChild(header);
+
+      const body = document.createElement('div');
+      body.className = 'comments-sidebar-thread-body';
+      body.textContent = entry.text;
+      entryEl.appendChild(body);
+
+      container.appendChild(entryEl);
+    }
+    return container;
   }
 
   function renderComposer(markId: string): HTMLElement {
@@ -767,6 +833,12 @@ export function initCommentsSidebar(options: CommentsSidebarOptions): CommentsSi
 
   applyCollapsedClass();
   render();
+  // The editor may load its initial marks asynchronously after the sidebar
+  // mounts (share mode fetches the doc, then applies server marks via a
+  // plugin-meta-only transaction). A few deferred renders catch those
+  // without us having to guess which mechanism delivered them.
+  window.setTimeout(render, 0);
+  window.setTimeout(render, 250);
   if (inboxAvailable) void refreshInbox();
 
   // Subscribe to live events that invalidate the Inbox cache.
