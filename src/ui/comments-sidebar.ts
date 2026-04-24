@@ -18,6 +18,10 @@ import { openPopoverForMark } from '../editor/plugins/mark-popover';
 
 // ---- Types ------------------------------------------------------
 
+export type PostReplyResult =
+  | { ok: true }
+  | { ok: false; code?: string; message: string };
+
 export interface CommentsSidebarOptions {
   /** The ProseMirror view the sidebar observes. */
   view: EditorView;
@@ -25,6 +29,19 @@ export interface CommentsSidebarOptions {
   container?: HTMLElement;
   /** Pre-computed "now" for deterministic tests. */
   now?: () => Date;
+  /**
+   * Resolve the author label for replies posted from the sidebar composer.
+   * Defaults to the lazy 'human:Anonymous'. Implementations typically
+   * return `human:${viewerName}`.
+   */
+  getAuthorLabel?: () => string;
+  /**
+   * Post a reply to the given thread. Implementations wrap
+   * shareClient.postCommentReply or an equivalent. Returning ok=true
+   * signals the sidebar to clear the composer and await the next
+   * re-render. Non-ok results are surfaced as inline errors.
+   */
+  postReply?: (markId: string, text: string) => Promise<PostReplyResult>;
 }
 
 interface ThreadRow {
@@ -169,9 +186,16 @@ export function initCommentsSidebar(options: CommentsSidebarOptions): CommentsSi
   const view = options.view;
   const container = options.container ?? document.body;
   const now = options.now ?? (() => new Date());
+  const getAuthorLabel = options.getAuthorLabel ?? (() => 'human:Anonymous');
+  const postReplyFn = options.postReply ?? null;
 
   let collapsed = readLocalFlag(COLLAPSED_STORAGE_KEY);
   let showResolved = readLocalFlag(SHOW_RESOLVED_STORAGE_KEY);
+  let expandedMarkId: string | null = null;
+  // Draft text preserved across re-renders so a re-render from an
+  // incoming mark update does not blow away what the user is typing.
+  const drafts = new Map<string, string>();
+  let activeInFlightMarkId: string | null = null;
 
   const root = document.createElement('aside');
   root.className = 'comments-sidebar';
@@ -282,17 +306,29 @@ export function initCommentsSidebar(options: CommentsSidebarOptions): CommentsSi
   }
 
   function renderRow(row: ThreadRow): HTMLElement {
-    const rowEl = document.createElement('button');
-    rowEl.type = 'button';
+    const rowEl = document.createElement('div');
     rowEl.className = 'comments-sidebar-row';
     if (row.resolved) rowEl.classList.add('comments-sidebar-row-resolved');
     if (row.orphaned) rowEl.classList.add('comments-sidebar-row-detached');
     rowEl.dataset.markId = row.markId;
 
+    const isExpanded = expandedMarkId === row.markId;
+    if (isExpanded) rowEl.classList.add('comments-sidebar-row-expanded');
+
+    // Clickable header — scroll + popover.
+    const headerButton = document.createElement('button');
+    headerButton.type = 'button';
+    headerButton.className = 'comments-sidebar-row-header';
+    headerButton.setAttribute('aria-label', 'Open thread in editor');
+    headerButton.addEventListener('click', () => {
+      scrollToMark(view, row.markId);
+      openPopoverForMark(view, row.markId);
+    });
+
     const quote = document.createElement('div');
     quote.className = 'comments-sidebar-quote';
     quote.textContent = row.quote || '(no anchor text)';
-    rowEl.appendChild(quote);
+    headerButton.appendChild(quote);
 
     const meta = document.createElement('div');
     meta.className = 'comments-sidebar-meta';
@@ -322,14 +358,151 @@ export function initCommentsSidebar(options: CommentsSidebarOptions): CommentsSi
       meta.appendChild(chip);
     }
 
-    rowEl.appendChild(meta);
+    headerButton.appendChild(meta);
+    rowEl.appendChild(headerButton);
 
-    rowEl.addEventListener('click', () => {
-      scrollToMark(view, row.markId);
-      openPopoverForMark(view, row.markId);
-    });
+    // Reply affordance and expandable composer. Only shown when a postReply
+    // implementation is provided (local-only sidebars omit the composer
+    // entirely to avoid an affordance with no backend).
+    if (postReplyFn && !row.orphaned) {
+      const actions = document.createElement('div');
+      actions.className = 'comments-sidebar-row-actions';
+      const replyButton = document.createElement('button');
+      replyButton.type = 'button';
+      replyButton.className = 'comments-sidebar-row-reply-toggle';
+      replyButton.textContent = isExpanded ? 'Cancel' : 'Reply';
+      replyButton.addEventListener('click', (event) => {
+        event.stopPropagation();
+        if (expandedMarkId === row.markId) {
+          expandedMarkId = null;
+        } else {
+          expandedMarkId = row.markId;
+        }
+        render();
+      });
+      actions.appendChild(replyButton);
+      rowEl.appendChild(actions);
+
+      if (isExpanded) {
+        rowEl.appendChild(renderComposer(row.markId));
+      }
+    }
 
     return rowEl;
+  }
+
+  function renderComposer(markId: string): HTMLElement {
+    const composer = document.createElement('div');
+    composer.className = 'comments-sidebar-composer';
+
+    const textarea = document.createElement('textarea');
+    textarea.className = 'comments-sidebar-composer-textarea';
+    textarea.placeholder = 'Write a reply…';
+    textarea.rows = 3;
+    textarea.value = drafts.get(markId) ?? '';
+    textarea.dataset.composerMarkId = markId;
+    textarea.addEventListener('input', () => {
+      drafts.set(markId, textarea.value);
+      updateSubmitState();
+    });
+
+    const errorEl = document.createElement('div');
+    errorEl.className = 'comments-sidebar-composer-error';
+    errorEl.hidden = true;
+
+    const actions = document.createElement('div');
+    actions.className = 'comments-sidebar-composer-actions';
+
+    const cancelButton = document.createElement('button');
+    cancelButton.type = 'button';
+    cancelButton.className = 'comments-sidebar-composer-cancel';
+    cancelButton.textContent = 'Cancel';
+    cancelButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      drafts.delete(markId);
+      expandedMarkId = null;
+      render();
+    });
+
+    const postButton = document.createElement('button');
+    postButton.type = 'button';
+    postButton.className = 'comments-sidebar-composer-post';
+    postButton.textContent = 'Post';
+
+    function updateSubmitState(): void {
+      const hasText = textarea.value.trim().length > 0;
+      const disabled = !hasText || activeInFlightMarkId === markId;
+      postButton.disabled = disabled;
+      postButton.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+    }
+
+    async function submit(): Promise<void> {
+      if (!postReplyFn) return;
+      const text = textarea.value.trim();
+      if (!text) return;
+      if (activeInFlightMarkId) return;
+      activeInFlightMarkId = markId;
+      postButton.textContent = 'Posting…';
+      updateSubmitState();
+      errorEl.hidden = true;
+      try {
+        const result = await postReplyFn(markId, text);
+        if (result.ok) {
+          drafts.delete(markId);
+          expandedMarkId = null;
+          render();
+        } else {
+          errorEl.hidden = false;
+          errorEl.textContent = result.message;
+          postButton.textContent = 'Post';
+        }
+      } catch (err) {
+        errorEl.hidden = false;
+        errorEl.textContent = err instanceof Error ? err.message : 'Reply failed';
+        postButton.textContent = 'Post';
+      } finally {
+        activeInFlightMarkId = null;
+        updateSubmitState();
+      }
+    }
+
+    postButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      void submit();
+    });
+    textarea.addEventListener('keydown', (event) => {
+      if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+        event.preventDefault();
+        void submit();
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        drafts.delete(markId);
+        expandedMarkId = null;
+        render();
+      }
+    });
+
+    actions.appendChild(cancelButton);
+    actions.appendChild(postButton);
+
+    composer.appendChild(textarea);
+    composer.appendChild(errorEl);
+    composer.appendChild(actions);
+
+    updateSubmitState();
+
+    // Focus the textarea on expansion without blocking the render.
+    window.setTimeout(() => {
+      textarea.focus();
+      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+    }, 0);
+
+    // Provide the author label to screen readers implicitly via aria-label
+    // on the textarea — keep the UI clean of a visible "Replying as" hint
+    // since the composer is contextual to a specific thread.
+    textarea.setAttribute('aria-label', `Reply as ${getAuthorLabel()}`);
+
+    return composer;
   }
 
   applyCollapsedClass();

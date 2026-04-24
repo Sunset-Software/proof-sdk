@@ -1034,18 +1034,110 @@
       background: transparent;
       border: none;
       border-bottom: 1px solid rgba(17, 17, 17, 0.04);
-      padding: 12px 18px;
-      cursor: pointer;
       font-family: inherit;
       color: inherit;
       transition: background 0.12s;
     }
-    .comments-sidebar-row:hover {
+    .comments-sidebar-row-header {
+      display: block;
+      width: 100%;
+      text-align: left;
+      background: transparent;
+      border: none;
+      padding: 12px 18px 10px;
+      cursor: pointer;
+      font-family: inherit;
+      color: inherit;
+    }
+    .comments-sidebar-row-header:hover {
       background: rgba(17, 17, 17, 0.03);
     }
-    .comments-sidebar-row:focus-visible {
+    .comments-sidebar-row-header:focus-visible {
       outline: 2px solid #0ea5e9;
       outline-offset: -2px;
+    }
+    .comments-sidebar-row-actions {
+      padding: 0 18px 10px;
+      display: flex;
+      justify-content: flex-end;
+    }
+    .comments-sidebar-row-reply-toggle {
+      background: transparent;
+      border: none;
+      color: #2563eb;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      padding: 4px 8px;
+      border-radius: 6px;
+    }
+    .comments-sidebar-row-reply-toggle:hover {
+      background: rgba(37, 99, 235, 0.08);
+    }
+    .comments-sidebar-row-expanded {
+      background: rgba(14, 165, 233, 0.03);
+    }
+    .comments-sidebar-composer {
+      padding: 0 18px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .comments-sidebar-composer-textarea {
+      width: 100%;
+      min-height: 72px;
+      padding: 8px 10px;
+      border: 1px solid rgba(17, 17, 17, 0.12);
+      border-radius: 8px;
+      font-family: inherit;
+      font-size: 13px;
+      line-height: 1.45;
+      resize: vertical;
+      box-sizing: border-box;
+      outline: none;
+      transition: border-color 0.12s;
+    }
+    .comments-sidebar-composer-textarea:focus {
+      border-color: #0ea5e9;
+    }
+    .comments-sidebar-composer-error {
+      font-size: 11px;
+      color: #b91c1c;
+      line-height: 1.4;
+    }
+    .comments-sidebar-composer-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+    .comments-sidebar-composer-cancel,
+    .comments-sidebar-composer-post {
+      font-family: inherit;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 7px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+      border: 1px solid transparent;
+    }
+    .comments-sidebar-composer-cancel {
+      background: transparent;
+      border-color: rgba(17, 17, 17, 0.12);
+      color: #333;
+    }
+    .comments-sidebar-composer-cancel:hover {
+      background: rgba(17, 17, 17, 0.04);
+    }
+    .comments-sidebar-composer-post {
+      background: #111;
+      color: #ffffff;
+    }
+    .comments-sidebar-composer-post:hover:not(:disabled) {
+      background: #2d2d2d;
+    }
+    .comments-sidebar-composer-post:disabled {
+      background: rgba(17, 17, 17, 0.25);
+      cursor: not-allowed;
     }
     .comments-sidebar-row-resolved {
       opacity: 0.55;

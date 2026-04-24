@@ -769,6 +769,39 @@ export class ShareClient {
     };
   }
 
+  /**
+   * Post a reply on an existing comment thread.
+   * Returns null if share mode is not active or inputs are empty,
+   * a ShareRequestError on HTTP failure, or the mutation response on success.
+   */
+  async postCommentReply(
+    markId: string,
+    by: string,
+    text: string,
+    options?: { token?: string }
+  ): Promise<ShareMarkMutationResponse | ShareRequestError | null> {
+    if (!this.slug) return null;
+    const trimmedMarkId = typeof markId === 'string' ? markId.trim() : '';
+    const actor = typeof by === 'string' ? by.trim() : '';
+    const body = typeof text === 'string' ? text : '';
+    if (!trimmedMarkId || !actor || !body.trim()) return null;
+    const base = await this.getMutationBase(options);
+    if ('error' in base) return base;
+
+    const response = await fetch(`${this.getApiBase()}/agent/${encodeURIComponent(this.slug)}/marks/reply`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...this.getShareAuthHeaders(options?.token),
+      },
+      body: JSON.stringify({ markId: trimmedMarkId, by: actor, text: body, ...base }),
+    });
+    if (!response.ok) return this.parseRequestError(response);
+    const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
+    this.rememberObservedMutationBase(payload);
+    return this.parseShareMarkMutationResponse(payload);
+  }
+
   async resolveComment(
     markId: string,
     by: string,

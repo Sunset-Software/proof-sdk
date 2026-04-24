@@ -1293,7 +1293,31 @@ class ProofEditorImpl implements ProofEditor {
     if (!this.isShareMode) return;
     if (this.commentsSidebarHandle) return;
     try {
-      this.commentsSidebarHandle = initCommentsSidebar({ view });
+      this.commentsSidebarHandle = initCommentsSidebar({
+        view,
+        getAuthorLabel: () => `human:${this.shareViewerName || 'Anonymous'}`,
+        postReply: async (markId, text) => {
+          try {
+            const author = `human:${this.shareViewerName || 'Anonymous'}`;
+            const result = await shareClient.postCommentReply(markId, author, text);
+            if (!result) {
+              return { ok: false, message: 'Reply is not available right now.' };
+            }
+            if ('error' in result) {
+              return { ok: false, code: result.error.code, message: result.error.message };
+            }
+            if (!result.success) {
+              return { ok: false, message: 'Server did not confirm the reply.' };
+            }
+            return { ok: true };
+          } catch (err) {
+            return {
+              ok: false,
+              message: err instanceof Error ? err.message : 'Reply failed',
+            };
+          }
+        },
+      });
     } catch (error) {
       console.warn('[comments-sidebar] failed to mount', error);
     }
