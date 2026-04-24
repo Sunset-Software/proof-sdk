@@ -71,7 +71,5 @@ test-results/
 # Playwright MCP screenshots
 .playwright-mcp/
 
-# Package locks (keep package.json)
-package-lock.json
 CODEX-IMPLEMENT.md
 MOBILE-ACTION-BAR-PLAN.md
